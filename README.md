@@ -229,9 +229,8 @@ docker-compose up -d
 
 - 需要 `--cap-add=SYS_ADMIN` 和 `--security-opt seccomp=unconfined` 权限运行 Chrome
 - 需要 `--shm-size=2g` 共享内存，否则 Chrome 可能崩溃
-- Docker 内代理地址不能用 `127.0.0.1`，需要用宿主机 IP 或 `host.docker.internal`
 
 ```bash
-# Docker 内使用宿主机代理
-curl "http://localhost:8000/v1/challenge?proxy=host.docker.internal:7897"
+# 使用
+curl "http://localhost:8000/v1/challenge"
 ```
