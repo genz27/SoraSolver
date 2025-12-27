@@ -198,26 +198,31 @@ cf_clearance=Bcg6jNLz...; __cf_bm=NwnQUekk...; _cfuvid=otCL9nbM...
 
 ## Docker 部署
 
-### 使用 docker-compose（推荐）
+### 一句话部署
+
+```bash
+docker run -d --name sora-solver -p 8000:8000 --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --shm-size=2g ghcr.io/genz27/sorasolver:latest
+```
+
+### 使用 docker-compose
+
+```yaml
+version: '3.8'
+services:
+  sora-solver:
+    image: ghcr.io/genz27/sorasolver:latest
+    ports:
+      - "8000:8000"
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+    shm_size: '2gb'
+    restart: unless-stopped
+```
 
 ```bash
 docker-compose up -d
-```
-
-### 手动构建
-
-```bash
-# 构建镜像
-docker build -t cloudflare-solver .
-
-# 运行容器
-docker run -d \
-  --name cloudflare-solver \
-  -p 8000:8000 \
-  --cap-add=SYS_ADMIN \
-  --security-opt seccomp=unconfined \
-  --shm-size=2g \
-  cloudflare-solver
 ```
 
 ### Docker 注意事项
