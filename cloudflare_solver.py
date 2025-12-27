@@ -10,6 +10,7 @@ import argparse
 from typing import Optional, Dict
 from dataclasses import dataclass, field
 from datetime import datetime
+from fake_useragent import UserAgent
 
 
 @dataclass
@@ -40,14 +41,6 @@ class CloudflareSolver:
     使用真实浏览器绕过 Cloudflare 检测。
     """
     
-    # 常见 User-Agent 列表
-    USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    ]
-    
     def __init__(
         self,
         proxy: Optional[str] = None,
@@ -65,6 +58,7 @@ class CloudflareSolver:
         self.proxy = proxy
         self.headless = headless
         self.timeout = timeout
+        self.ua = UserAgent()
     
     def _random_delay(self, min_ms: int = 100, max_ms: int = 500):
         """随机延迟"""
@@ -90,8 +84,8 @@ class CloudflareSolver:
                 proxy_addr = f"http://{proxy_addr}"
             options.set_proxy(proxy_addr)
         
-        # 随机选择 User-Agent
-        user_agent = random.choice(self.USER_AGENTS)
+        # 随机选择 User-Agent（使用 fake-useragent 库）
+        user_agent = self.ua.chrome
         options.set_user_agent(user_agent)
         
         # 无头模式 - 使用新版无头模式
