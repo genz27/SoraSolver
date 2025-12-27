@@ -5,6 +5,7 @@ Cloudflare Turnstile Challenge Solver using DrissionPage
 """
 import time
 import json
+import random
 import argparse
 from typing import Optional, Dict
 from dataclasses import dataclass, field
@@ -39,6 +40,14 @@ class CloudflareSolver:
     使用真实浏览器绕过 Cloudflare 检测。
     """
     
+    # 常见 User-Agent 列表
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    ]
+    
     def __init__(
         self,
         proxy: Optional[str] = None,
@@ -56,6 +65,11 @@ class CloudflareSolver:
         self.proxy = proxy
         self.headless = headless
         self.timeout = timeout
+    
+    def _random_delay(self, min_ms: int = 100, max_ms: int = 500):
+        """随机延迟"""
+        delay = random.randint(min_ms, max_ms) / 1000
+        time.sleep(delay)
     
     def _create_page(self):
         """创建浏览器页面"""
@@ -76,20 +90,181 @@ class CloudflareSolver:
                 proxy_addr = f"http://{proxy_addr}"
             options.set_proxy(proxy_addr)
         
-        # 无头模式
+        # 随机选择 User-Agent
+        user_agent = random.choice(self.USER_AGENTS)
+        options.set_user_agent(user_agent)
+        
+        # 无头模式 - 使用新版无头模式
         if self.headless:
-            options.headless()
+            options.set_argument("--headless=new")
+        
+        # 窗口大小随机化
+        width = random.randint(1200, 1920)
+        height = random.randint(800, 1080)
+        options.set_argument(f"--window-size={width},{height}")
         
         # 反检测设置
         options.set_argument("--disable-blink-features=AutomationControlled")
         options.set_argument("--no-sandbox")
         options.set_argument("--disable-dev-shm-usage")
         options.set_argument("--disable-gpu")
+        options.set_argument("--disable-infobars")
+        options.set_argument("--disable-extensions")
+        options.set_argument("--disable-popup-blocking")
+        options.set_argument("--ignore-certificate-errors")
+        options.set_argument("--disable-web-security")
+        
+        # 语言和时区
+        options.set_argument("--lang=en-US,en")
+        
         # Docker 环境额外参数
         options.set_argument("--disable-software-rasterizer")
         options.set_argument("--single-process")
         
+        # 设置 pref 来隐藏自动化特征
+        options.set_pref("credentials_enable_service", False)
+        options.set_pref("profile.password_manager_enabled", False)
+        
         return ChromiumPage(options)
+    
+    def _inject_stealth_js(self, page):
+        """注入反检测 JavaScript"""
+        stealth_js = """
+        // 覆盖 webdriver 属性
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+        
+        // 覆盖 plugins
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5]
+        });
+        
+        // 覆盖 languages
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en']
+        });
+        
+        // 覆盖 platform
+        Object.defineProperty(navigator, 'platform', {
+            get: () => 'Win32'
+        });
+        
+        // 覆盖 hardwareConcurrency
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+            get: () => 8
+        });
+        
+        // 覆盖 deviceMemory
+        Object.defineProperty(navigator, 'deviceMemory', {
+            get: () => 8
+        });
+        
+        // 修改 chrome 对象
+        window.chrome = {
+            runtime: {}
+        };
+        
+        // 覆盖权限查询
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+        );
+        """
+        try:
+            page.run_js(stealth_js)
+        except Exception as e:
+            print(f"⚠️ 注入反检测脚本失败: {e}")
+    
+    def _simulate_mouse_movement(self, page):
+        """模拟鼠标移动"""
+        try:
+            # 获取页面尺寸
+            width = page.run_js("return window.innerWidth") or 1200
+            height = page.run_js("return window.innerHeight") or 800
+            
+            # 随机移动鼠标几次
+            for _ in range(random.randint(3, 6)):
+                x = random.randint(100, width - 100)
+                y = random.randint(100, height - 100)
+                page.actions.move_to((x, y))
+                self._random_delay(50, 200)
+            
+            print("🖱️ 模拟鼠标移动完成")
+        except Exception as e:
+            print(f"⚠️ 模拟鼠标移动失败: {e}")
+    
+    def _try_click_turnstile(self, page) -> bool:
+        """尝试点击 Turnstile checkbox"""
+        try:
+            # Turnstile iframe 选择器
+            selectors = [
+                'iframe[src*="challenges.cloudflare.com"]',
+                'iframe[src*="turnstile"]',
+                'iframe[title*="Cloudflare"]',
+                '#turnstile-wrapper iframe',
+                '.cf-turnstile iframe',
+            ]
+            
+            for selector in selectors:
+                try:
+                    iframe = page.ele(selector, timeout=2)
+                    if iframe:
+                        print(f"🔍 找到 Turnstile iframe: {selector}")
+                        
+                        # 切换到 iframe
+                        page.to_frame(iframe)
+                        self._random_delay(300, 800)
+                        
+                        # 尝试点击 checkbox
+                        checkbox_selectors = [
+                            'input[type="checkbox"]',
+                            '.ctp-checkbox-label',
+                            '#challenge-stage',
+                            'div[class*="checkbox"]',
+                        ]
+                        
+                        for cb_selector in checkbox_selectors:
+                            try:
+                                checkbox = page.ele(cb_selector, timeout=1)
+                                if checkbox:
+                                    # 模拟人类点击 - 先移动到元素附近
+                                    self._random_delay(200, 500)
+                                    checkbox.click()
+                                    print(f"✅ 点击了 Turnstile checkbox: {cb_selector}")
+                                    page.to_main()
+                                    return True
+                            except:
+                                continue
+                        
+                        page.to_main()
+                except:
+                    continue
+            
+            # 尝试直接点击页面上的验证按钮
+            button_selectors = [
+                'input[type="button"][value*="Verify"]',
+                'button:contains("Verify")',
+                '#challenge-form input[type="submit"]',
+            ]
+            
+            for selector in button_selectors:
+                try:
+                    btn = page.ele(selector, timeout=1)
+                    if btn:
+                        self._random_delay(200, 500)
+                        btn.click()
+                        print(f"✅ 点击了验证按钮: {selector}")
+                        return True
+                except:
+                    continue
+                    
+        except Exception as e:
+            print(f"⚠️ 点击 Turnstile 失败: {e}")
+        
+        return False
     
     def solve(self, website_url: str) -> CloudflareSolution:
         """
@@ -107,8 +282,20 @@ class CloudflareSolver:
         page = self._create_page()
         
         try:
+            # 初始随机延迟
+            self._random_delay(500, 1500)
+            
             print(f"🌐 正在访问: {website_url}")
             page.get(website_url)
+            
+            # 注入反检测脚本
+            self._inject_stealth_js(page)
+            
+            # 等待页面加载
+            self._random_delay(1000, 2000)
+            
+            # 模拟鼠标移动
+            self._simulate_mouse_movement(page)
             
             # 等待 Cloudflare 验证完成
             cf_clearance = self._wait_for_clearance(page)
@@ -133,6 +320,8 @@ class CloudflareSolver:
     def _wait_for_clearance(self, page) -> str:
         """等待 cf_clearance cookie 出现"""
         start_time = time.time()
+        click_attempted = False
+        last_mouse_move = 0
         
         while True:
             elapsed = time.time() - start_time
@@ -147,8 +336,20 @@ class CloudflareSolver:
             
             # 检查页面是否还在验证中
             title = page.title.lower() if page.title else ""
+            
             if "just a moment" in title or "checking" in title:
                 print(f"⏳ 等待 Cloudflare 验证中... ({elapsed:.1f}s)")
+                
+                # 每5秒尝试点击一次 Turnstile
+                if not click_attempted or elapsed > 5:
+                    if self._try_click_turnstile(page):
+                        click_attempted = True
+                        self._random_delay(1000, 2000)
+                
+                # 每10秒模拟一次鼠标移动
+                if elapsed - last_mouse_move > 10:
+                    self._simulate_mouse_movement(page)
+                    last_mouse_move = elapsed
             else:
                 # 页面标题变了，可能已经通过，再检查一次 cookie
                 for cookie in page.cookies():
@@ -156,7 +357,8 @@ class CloudflareSolver:
                         print(f"✅ Cloudflare 验证通过，耗时 {elapsed:.1f}s")
                         return cookie["value"]
             
-            time.sleep(1)
+            # 随机延迟
+            self._random_delay(800, 1500)
 
 
 class CloudflareError(Exception):
