@@ -195,3 +195,38 @@ cf_clearance=Bcg6jNLz...; __cf_bm=NwnQUekk...; _cfuvid=otCL9nbM...
 2. **IP 封禁**：如果代理 IP 被 Cloudflare 严重标记，即使浏览器也可能无法通过验证
 3. **Cookie 有效期**：`cf_clearance` cookie 通常有效 30 分钟左右
 4. **User-Agent**：使用获取到的 `user_agent` 发送后续请求，保持一致性
+
+## Docker 部署
+
+### 使用 docker-compose（推荐）
+
+```bash
+docker-compose up -d
+```
+
+### 手动构建
+
+```bash
+# 构建镜像
+docker build -t cloudflare-solver .
+
+# 运行容器
+docker run -d \
+  --name cloudflare-solver \
+  -p 8000:8000 \
+  --cap-add=SYS_ADMIN \
+  --security-opt seccomp=unconfined \
+  --shm-size=2g \
+  cloudflare-solver
+```
+
+### Docker 注意事项
+
+- 需要 `--cap-add=SYS_ADMIN` 和 `--security-opt seccomp=unconfined` 权限运行 Chrome
+- 需要 `--shm-size=2g` 共享内存，否则 Chrome 可能崩溃
+- Docker 内代理地址不能用 `127.0.0.1`，需要用宿主机 IP 或 `host.docker.internal`
+
+```bash
+# Docker 内使用宿主机代理
+curl "http://localhost:8000/v1/challenge?proxy=host.docker.internal:7897"
+```

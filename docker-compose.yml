@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  cloudflare-solver:
+    build: .
+    container_name: cloudflare-solver
+    ports:
+      - "8000:8000"
+    environment:
+      - CHROME_PATH=/usr/bin/google-chrome-stable
+    # 需要这些权限才能运行 Chrome
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+    # 共享内存，Chrome 需要
+    shm_size: '2gb'
+    restart: unless-stopped

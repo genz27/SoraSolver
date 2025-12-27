@@ -59,9 +59,15 @@ class CloudflareSolver:
     
     def _create_page(self):
         """创建浏览器页面"""
+        import os
         from DrissionPage import ChromiumPage, ChromiumOptions
         
         options = ChromiumOptions()
+        
+        # Docker 环境下设置 Chrome 路径
+        chrome_path = os.environ.get("CHROME_PATH")
+        if chrome_path:
+            options.set_browser_path(chrome_path)
         
         # 设置代理
         if self.proxy:
@@ -79,6 +85,9 @@ class CloudflareSolver:
         options.set_argument("--no-sandbox")
         options.set_argument("--disable-dev-shm-usage")
         options.set_argument("--disable-gpu")
+        # Docker 环境额外参数
+        options.set_argument("--disable-software-rasterizer")
+        options.set_argument("--single-process")
         
         return ChromiumPage(options)
     
