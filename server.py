@@ -1,30 +1,85 @@
 """
 Cloudflare Challenge API Server
 
-提供 /v1/challenge 接口，每次请求都会启动浏览器获取新的 cf_clearance
-串行处理模式：一次只处理一个请求，其他请求排队等待
+提供 /v1/challenge 接口，支持并发处理和结果缓存
+优化版本：浏览器池 + 结果缓存 + 并发控制 + 性能监控
 """
 import time
 import uuid
 import asyncio
+import atexit
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel
-from cloudflare_solver import CloudflareSolver, CloudflareError
+from cloudflare_solver import (
+    CloudflareSolver, CloudflareError,
+    init_browser_pool, get_browser_pool, get_cache
+)
 
-# 串行锁 - 确保同一时间只有一个请求在处理
-request_lock = asyncio.Lock()
-# 单线程执行器 - 运行同步的浏览器代码
-executor = ThreadPoolExecutor(max_workers=1)
-# 当前队列状态
-queue_status = {"waiting": 0, "processing": False}
+# 配置
+MAX_WORKERS = 3  # 并发浏览器数量
+POOL_SIZE = 2    # 预热浏览器池大小
+SEMAPHORE_LIMIT = 3  # 并发请求限制
+
+# 并发控制
+request_semaphore: Optional[asyncio.Semaphore] = None
+executor: Optional[ThreadPoolExecutor] = None
+
+# 统计信息
+stats = {
+    "total_requests": 0,
+    "success": 0,
+    "failed": 0,
+    "cache_hits": 0,
+    "avg_time": 0.0,
+    "total_time": 0.0,
+    "queue_waiting": 0,
+    "processing": 0,
+    "start_time": None
+}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    global request_semaphore, executor
+    
+    # 启动时初始化
+    print("🚀 初始化服务...")
+    stats["start_time"] = time.time()
+    
+    # 初始化并发控制
+    request_semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
+    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    
+    # 初始化浏览器池（后台预热）
+    try:
+        init_browser_pool(pool_size=POOL_SIZE, headless=True, warmup=True)
+    except Exception as e:
+        print(f"⚠️ 浏览器池初始化失败: {e}")
+    
+    print("✅ 服务就绪")
+    
+    yield
+    
+    # 关闭时清理
+    print("🛑 关闭服务...")
+    if executor:
+        executor.shutdown(wait=False)
+    pool = get_browser_pool()
+    if pool:
+        pool.shutdown()
+    print("✅ 服务已关闭")
+
 
 app = FastAPI(
     title="Cloudflare Challenge API",
-    description="自动解决 Cloudflare Turnstile Challenge，获取 cf_clearance cookie",
-    version="1.0.0"
+    description="自动解决 Cloudflare Turnstile Challenge，获取 cf_clearance cookie（优化版）",
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 
@@ -36,6 +91,7 @@ class ChallengeResponse(BaseModel):
     user_agent: str
     elapsed_seconds: float
     request_id: str
+    from_cache: bool = False
 
 
 class ErrorResponse(BaseModel):
@@ -45,7 +101,21 @@ class ErrorResponse(BaseModel):
     request_id: str
 
 
-# 首页 HTML 模板函数
+class StatsResponse(BaseModel):
+    """统计响应模型"""
+    total_requests: int
+    success: int
+    failed: int
+    success_rate: str
+    cache_hits: int
+    avg_time: float
+    uptime_seconds: float
+    queue_waiting: int
+    processing: int
+    cache_stats: dict
+    pool_stats: Optional[dict]
+
+
 def get_index_html(host: str = "localhost:8000") -> str:
     return f"""
 <!DOCTYPE html>
@@ -53,21 +123,24 @@ def get_index_html(host: str = "localhost:8000") -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cloudflare Solver API</title>
+    <title>Cloudflare Solver API v2</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }}
-        .container {{ background: white; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 600px; width: 100%; padding: 40px; }}
+        .container {{ background: white; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 700px; width: 100%; padding: 40px; }}
         h1 {{ color: #333; margin-bottom: 10px; font-size: 28px; }}
         .subtitle {{ color: #666; margin-bottom: 30px; }}
+        .version {{ background: #667eea; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 10px; }}
         .status {{ display: flex; align-items: center; gap: 10px; padding: 15px; background: #d4edda; border-radius: 8px; margin-bottom: 15px; }}
         .status-dot {{ width: 12px; height: 12px; background: #28a745; border-radius: 50%; animation: pulse 2s infinite; }}
         @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} }}
-        .queue-status {{ padding: 15px; background: #e7f3ff; border-radius: 8px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }}
-        .queue-item {{ text-align: center; }}
-        .queue-number {{ font-size: 24px; font-weight: 700; color: #0066cc; }}
-        .queue-label {{ font-size: 12px; color: #666; margin-top: 4px; }}
-        .processing {{ color: #28a745 !important; }}
+        .stats-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 25px; }}
+        .stat-item {{ text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; }}
+        .stat-number {{ font-size: 24px; font-weight: 700; color: #333; }}
+        .stat-number.success {{ color: #28a745; }}
+        .stat-number.processing {{ color: #0066cc; }}
+        .stat-number.cache {{ color: #fd7e14; }}
+        .stat-label {{ font-size: 12px; color: #666; margin-top: 4px; }}
         .endpoint {{ background: #f8f9fa; border-radius: 8px; padding: 20px; margin-bottom: 15px; }}
         .endpoint-title {{ font-weight: 600; color: #333; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }}
         .method {{ background: #28a745; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }}
@@ -83,22 +156,30 @@ def get_index_html(host: str = "localhost:8000") -> str:
 </head>
 <body>
     <div class="container">
-        <h1>🛡️ Cloudflare Solver API</h1>
-        <p class="subtitle">自动解决 Cloudflare Turnstile Challenge</p>
+        <h1>🛡️ Cloudflare Solver API <span class="version">v2.0</span></h1>
+        <p class="subtitle">自动解决 Cloudflare Turnstile Challenge（优化版）</p>
         
         <div class="status">
             <div class="status-dot"></div>
             <span style="color: #155724; font-weight: 500;">服务运行中</span>
         </div>
         
-        <div class="queue-status">
-            <div class="queue-item">
-                <div class="queue-number" id="waiting">-</div>
-                <div class="queue-label">排队等待</div>
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-number" id="total">-</div>
+                <div class="stat-label">总请求</div>
             </div>
-            <div class="queue-item">
-                <div class="queue-number processing" id="processing">-</div>
-                <div class="queue-label">正在处理</div>
+            <div class="stat-item">
+                <div class="stat-number success" id="success-rate">-</div>
+                <div class="stat-label">成功率</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number processing" id="processing">-</div>
+                <div class="stat-label">处理中</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number cache" id="cache-rate">-</div>
+                <div class="stat-label">缓存命中</div>
             </div>
         </div>
         
@@ -109,117 +190,169 @@ def get_index_html(host: str = "localhost:8000") -> str:
             </div>
             <div class="endpoint-url">解决 Cloudflare challenge，获取 cf_clearance cookie</div>
             <div class="endpoint-desc">
-                参数: url (目标URL), proxy (代理), timeout (超时), headless (无头模式)
+                参数: url, proxy, timeout, headless, skip_cache
             </div>
         </div>
         
         <div class="endpoint">
             <div class="endpoint-title">
                 <span class="method">GET</span>
-                <span>/v1/queue</span>
+                <span>/v1/stats</span>
             </div>
-            <div class="endpoint-url">获取当前队列状态</div>
+            <div class="endpoint-url">获取服务统计信息</div>
         </div>
         
         <div class="endpoint">
             <div class="endpoint-title">
-                <span class="method">GET</span>
-                <span>/health</span>
+                <span class="method">POST</span>
+                <span>/v1/cache/clear</span>
             </div>
-            <div class="endpoint-url">健康检查接口</div>
+            <div class="endpoint-url">清空结果缓存</div>
         </div>
         
         <div class="example">
             <div class="example-title">使用示例</div>
-            <code>curl "http://{host}/v1/challenge"</code>
+            <code>curl "http://{host}/v1/challenge?url=https://example.com"</code>
         </div>
         
         <div class="links">
             <a href="/docs">📚 API 文档</a>
+            <a href="/v1/stats">📊 统计信息</a>
             <a href="/health">💚 健康检查</a>
-            <a href="https://github.com/genz27/SoraSolver" target="_blank">📦 GitHub</a>
         </div>
     </div>
     
     <script>
-        function updateQueue() {{
-            fetch('/v1/queue')
+        function updateStats() {{
+            fetch('/v1/stats')
                 .then(r => r.json())
                 .then(data => {{
-                    document.getElementById('waiting').textContent = data.waiting;
-                    document.getElementById('processing').textContent = data.processing ? '1' : '0';
+                    document.getElementById('total').textContent = data.total_requests;
+                    document.getElementById('success-rate').textContent = data.success_rate;
+                    document.getElementById('processing').textContent = data.processing + '/' + data.queue_waiting;
+                    document.getElementById('cache-rate').textContent = data.cache_stats.hit_rate;
                 }})
                 .catch(() => {{}});
         }}
-        updateQueue();
-        setInterval(updateQueue, 2000);
+        updateStats();
+        setInterval(updateStats, 3000);
     </script>
 </body>
 </html>
 """
 
 
-@app.get("/v1/queue")
-async def get_queue_status():
-    """获取当前队列状态"""
-    return {
-        "waiting": queue_status["waiting"],
-        "processing": queue_status["processing"]
-    }
+@app.get("/v1/stats", response_model=StatsResponse)
+async def get_stats():
+    """获取服务统计信息"""
+    cache = get_cache()
+    pool = get_browser_pool()
+    
+    total = stats["total_requests"]
+    success_rate = f"{stats['success'] / total * 100:.1f}%" if total > 0 else "0%"
+    uptime = time.time() - stats["start_time"] if stats["start_time"] else 0
+    
+    return StatsResponse(
+        total_requests=total,
+        success=stats["success"],
+        failed=stats["failed"],
+        success_rate=success_rate,
+        cache_hits=stats["cache_hits"],
+        avg_time=round(stats["avg_time"], 2),
+        uptime_seconds=round(uptime, 0),
+        queue_waiting=stats["queue_waiting"],
+        processing=stats["processing"],
+        cache_stats=cache.stats(),
+        pool_stats=pool.stats() if pool else None
+    )
+
+
+@app.post("/v1/cache/clear")
+async def clear_cache():
+    """清空结果缓存"""
+    cache = get_cache()
+    old_stats = cache.stats()
+    cache.clear()
+    return {"success": True, "cleared": old_stats["size"]}
 
 
 @app.get("/v1/challenge", response_model=ChallengeResponse, responses={
-    500: {"model": ErrorResponse, "description": "Challenge 解决失败"}
+    500: {"model": ErrorResponse, "description": "Challenge 解决失败"},
+    503: {"model": ErrorResponse, "description": "服务繁忙"}
 })
 async def solve_challenge(
     url: str = Query(default="https://sora.chatgpt.com", description="目标 URL"),
     proxy: Optional[str] = Query(default=None, description="代理地址 (ip:port 或 http://ip:port)"),
     timeout: int = Query(default=60, ge=10, le=300, description="超时时间（秒）"),
-    headless: bool = Query(default=True, description="是否无头模式")
+    headless: bool = Query(default=True, description="是否无头模式"),
+    skip_cache: bool = Query(default=False, description="跳过缓存，强制获取新 cookie")
 ):
     """
-    解决 Cloudflare Turnstile Challenge（串行排队模式）
+    解决 Cloudflare Turnstile Challenge（并发模式）
     
-    每次请求都会启动新的浏览器实例，获取全新的 cf_clearance cookie。
-    请求按顺序排队处理，同一时间只有一个请求在执行。
-    
-    - **url**: 目标网站 URL（默认 sora.chatgpt.com）
-    - **proxy**: 代理地址，格式 ip:port 或 http://ip:port
-    - **timeout**: 等待验证超时时间（10-300秒）
-    - **headless**: 是否使用无头模式（默认 True）
+    支持并发处理，自动缓存结果（30分钟有效期）
     """
     request_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    from_cache = False
     
-    # 进入排队
-    queue_status["waiting"] += 1
-    queue_position = queue_status["waiting"]
-    print(f"[{request_id}] 📥 请求进入队列，当前排队: {queue_position}")
+    # 更新统计
+    stats["total_requests"] += 1
+    stats["queue_waiting"] += 1
+    
+    print(f"[{request_id}] 📥 请求进入，等待: {stats['queue_waiting']}, 处理中: {stats['processing']}")
     
     try:
-        # 获取锁 - 串行处理
-        async with request_lock:
-            queue_status["waiting"] -= 1
-            queue_status["processing"] = True
+        # 获取信号量 - 控制并发
+        async with request_semaphore:
+            stats["queue_waiting"] -= 1
+            stats["processing"] += 1
             
-            start_time = time.time()
-            print(f"[{request_id}] 🚀 开始解决 Cloudflare challenge")
-            print(f"[{request_id}]    URL: {url}")
-            print(f"[{request_id}]    Proxy: {proxy or '无'}")
-            print(f"[{request_id}]    Headless: {headless}")
+            print(f"[{request_id}] 🚀 开始处理 | URL: {url} | Proxy: {proxy or '无'}")
+            
+            # 先检查缓存
+            if not skip_cache:
+                cache = get_cache()
+                cached = cache.get(url, proxy)
+                if cached:
+                    elapsed = time.time() - start_time
+                    stats["success"] += 1
+                    stats["cache_hits"] += 1
+                    print(f"[{request_id}] 📦 缓存命中，耗时 {elapsed:.2f}s")
+                    
+                    return ChallengeResponse(
+                        success=True,
+                        cf_clearance=cached.cf_clearance,
+                        cookies=cached.cookies,
+                        user_agent=cached.user_agent,
+                        elapsed_seconds=round(elapsed, 2),
+                        request_id=request_id,
+                        from_cache=True
+                    )
             
             solver = CloudflareSolver(
                 proxy=proxy,
                 headless=headless,
-                timeout=timeout
+                timeout=timeout,
+                use_cache=True,
+                use_pool=True
             )
             
             try:
-                # 在线程池中运行同步代码，避免阻塞事件循环
                 loop = asyncio.get_event_loop()
-                solution = await loop.run_in_executor(executor, lambda: solver.solve(url))
+                solution = await loop.run_in_executor(
+                    executor, 
+                    lambda: solver.solve(url, skip_cache=skip_cache)
+                )
+                
                 elapsed = time.time() - start_time
                 
-                print(f"[{request_id}] ✅ Challenge 解决成功，耗时 {elapsed:.2f}s")
+                # 更新统计
+                stats["success"] += 1
+                stats["total_time"] += elapsed
+                stats["avg_time"] = stats["total_time"] / stats["success"]
+                
+                print(f"[{request_id}] ✅ 成功，耗时 {elapsed:.2f}s")
                 
                 return ChallengeResponse(
                     success=True,
@@ -227,12 +360,14 @@ async def solve_challenge(
                     cookies=solution.cookies,
                     user_agent=solution.user_agent,
                     elapsed_seconds=round(elapsed, 2),
-                    request_id=request_id
+                    request_id=request_id,
+                    from_cache=from_cache
                 )
                 
             except CloudflareError as e:
                 elapsed = time.time() - start_time
-                print(f"[{request_id}] ❌ Challenge 解决失败: {e}")
+                stats["failed"] += 1
+                print(f"[{request_id}] ❌ 失败: {e}")
                 
                 raise HTTPException(
                     status_code=500,
@@ -245,7 +380,8 @@ async def solve_challenge(
                 )
             except Exception as e:
                 elapsed = time.time() - start_time
-                print(f"[{request_id}] ❌ 未知错误: {e}")
+                stats["failed"] += 1
+                print(f"[{request_id}] ❌ 错误: {e}")
                 
                 raise HTTPException(
                     status_code=500,
@@ -257,17 +393,34 @@ async def solve_challenge(
                     }
                 )
             finally:
-                queue_status["processing"] = False
+                stats["processing"] -= 1
+                
     except asyncio.CancelledError:
-        queue_status["waiting"] -= 1
+        stats["queue_waiting"] -= 1
         print(f"[{request_id}] ⚠️ 请求被取消")
         raise
+
+
+# 兼容旧接口
+@app.get("/v1/queue")
+async def get_queue_status():
+    """获取当前队列状态（兼容旧接口）"""
+    return {
+        "waiting": stats["queue_waiting"],
+        "processing": stats["processing"]
+    }
 
 
 @app.get("/health")
 async def health_check():
     """健康检查"""
-    return {"status": "ok", "service": "cloudflare-challenge-api"}
+    pool = get_browser_pool()
+    return {
+        "status": "ok",
+        "service": "cloudflare-challenge-api",
+        "version": "2.0.0",
+        "pool_available": pool.stats()["available"] if pool else 0
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
