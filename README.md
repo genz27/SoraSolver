@@ -84,6 +84,5 @@ Docker 必须设置 `shm_size: 2gb`，否则 Chrome 会崩溃。
 
 ```yaml
 volumes:
-  - ./data:/app/data      # 配置数据库
-  - ./static:/app/static  # 页面模板（可选）
+  - ./data:/app/data  # 配置数据库
 ```

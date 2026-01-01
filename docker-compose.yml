@@ -8,8 +8,6 @@ services:
     volumes:
       # 挂载数据目录，持久化配置和数据库
       - ./data:/app/data
-      # 可选：挂载静态文件，方便修改页面
-      - ./static:/app/static
     environment:
       - MAX_WORKERS=3
       - POOL_SIZE=2
