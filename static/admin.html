@@ -35,6 +35,13 @@
         .msg-success { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
         .msg-error { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
         .hidden { display: none; }
+        /* 开关样式 */
+        .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #404040; border-radius: 24px; transition: 0.3s; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.3s; }
+        .switch input:checked + .slider { background: #3b82f6; }
+        .switch input:checked + .slider:before { transform: translateX(20px); }
     </style>
 </head>
 <body>
@@ -118,20 +125,51 @@
             if (!data) return;
             const form = document.getElementById('config-form');
             form.innerHTML = '';
+            
+            // 配置项中文名映射
+            const labels = {
+                'max_workers': '并发浏览器数',
+                'pool_size': '浏览器池大小',
+                'semaphore_limit': '并发请求限制',
+                'cache_ttl': '缓存过期时间(秒)',
+                'require_api_key': '启用API Key验证'
+            };
+            
             for (const [key, info] of Object.entries(data)) {
-                form.innerHTML += `
-                    <div class="form-row">
-                        <label title="${info.description || ''}">${key}</label>
-                        <input type="text" data-key="${key}" value="${info.value || ''}">
-                    </div>
-                `;
+                const label = labels[key] || key;
+                if (key === 'require_api_key') {
+                    // 开关样式
+                    const checked = info.value === '1' ? 'checked' : '';
+                    form.innerHTML += `
+                        <div class="form-row">
+                            <label>${label}</label>
+                            <label class="switch">
+                                <input type="checkbox" data-key="${key}" ${checked}>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    `;
+                } else {
+                    form.innerHTML += `
+                        <div class="form-row">
+                            <label>${label}</label>
+                            <input type="text" data-key="${key}" value="${info.value || ''}">
+                        </div>
+                    `;
+                }
             }
         }
         
         async function saveConfig() {
-            const inputs = document.querySelectorAll('#config-form input');
             const cfg = {};
-            inputs.forEach(inp => cfg[inp.dataset.key] = inp.value);
+            // 处理文本输入
+            document.querySelectorAll('#config-form input[type="text"]').forEach(inp => {
+                cfg[inp.dataset.key] = inp.value;
+            });
+            // 处理开关
+            document.querySelectorAll('#config-form input[type="checkbox"]').forEach(inp => {
+                cfg[inp.dataset.key] = inp.checked ? '1' : '0';
+            });
             await api('/config', 'POST', cfg);
             showMsg('配置已保存');
         }
