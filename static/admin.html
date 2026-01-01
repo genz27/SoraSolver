@@ -143,7 +143,8 @@
                 if (data.success && data.token) {
                     token = data.token;
                     localStorage.setItem('admin_token', token);
-                    showAdmin();
+                    // 直接刷新页面，让初始化逻辑处理显示
+                    window.location.reload();
                 } else {
                     showMsg(document.getElementById('login-msg'), data.message || '登录失败', true);
                 }
