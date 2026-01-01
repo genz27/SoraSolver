@@ -143,9 +143,9 @@
                 if (data.success && data.token) {
                     token = data.token;
                     localStorage.setItem('admin_token', token);
-                    console.log('Token saved, showing admin...');
-                    // 直接显示管理页面
-                    showAdmin();
+                    console.log('Token saved, reloading page...');
+                    // 刷新页面让初始化逻辑重新检测 token
+                    window.location.reload();
                 } else {
                     showMsg(document.getElementById('login-msg'), data.message || '登录失败', true);
                 }
