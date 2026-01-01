@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: #f5f5f5; min-height: 100vh; padding: 24px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { font-size: 20px; margin-bottom: 24px; }
+        .card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 24px; margin-bottom: 16px; }
+        .card-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #eee; }
+        .form-row { display: flex; gap: 12px; margin-bottom: 12px; align-items: center; }
+        .form-row label { width: 120px; font-size: 14px; color: #666; }
+        .form-row input, .form-row select { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        .form-row input:focus { outline: none; border-color: #2563eb; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; }
+        .btn-primary { background: #2563eb; color: #fff; }
+        .btn-danger { background: #dc2626; color: #fff; }
+        .btn-sm { padding: 4px 8px; font-size: 12px; }
+        .btn:hover { opacity: 0.9; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+        th { color: #666; font-weight: 500; }
+        .key-text { font-family: monospace; font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+        .badge { padding: 2px 6px; border-radius: 4px; font-size: 11px; }
+        .badge-green { background: #dcfce7; color: #166534; }
+        .badge-red { background: #fee2e2; color: #991b1b; }
+        .msg { padding: 12px; border-radius: 4px; margin-bottom: 16px; font-size: 14px; }
+        .msg-success { background: #dcfce7; color: #166534; }
+        .msg-error { background: #fee2e2; color: #991b1b; }
+        .hidden { display: none; }
+        
+        /* 登录页 */
+        .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .login-card { width: 320px; }
+        .login-card h1 { text-align: center; margin-bottom: 24px; }
+        .login-card .form-row { flex-direction: column; }
+        .login-card .form-row label { width: auto; margin-bottom: 4px; }
+        .login-card .btn { width: 100%; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <!-- 登录页 -->
+    <div id="login-page" class="login-wrap">
+        <div class="card login-card">
+            <h1>管理后台</h1>
+            <div id="login-msg" class="msg hidden"></div>
+            <div class="form-row">
+                <label>用户名</label>
+                <input type="text" id="username" value="admin">
+            </div>
+            <div class="form-row">
+                <label>密码</label>
+                <input type="password" id="password">
+            </div>
+            <button class="btn btn-primary" onclick="login()">登录</button>
+        </div>
+    </div>
+    
+    <!-- 管理页 -->
+    <div id="admin-page" class="container hidden">
+        <h1>管理后台 <a href="/" style="font-size:14px;color:#2563eb;text-decoration:none;margin-left:16px;">返回首页</a></h1>
+        
+        <div id="msg" class="msg hidden"></div>
+        
+        <!-- 配置管理 -->
+        <div class="card">
+            <div class="card-title">系统配置</div>
+            <div id="config-form"></div>
+            <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+        </div>
+        
+        <!-- API Key 管理 -->
+        <div class="card">
+            <div class="card-title">API Key 管理</div>
+            <div class="form-row" style="margin-bottom:16px;">
+                <input type="text" id="new-key-name" placeholder="Key 名称（可选）" style="flex:1;">
+                <button class="btn btn-primary" onclick="addKey()">添加 Key</button>
+            </div>
+            <table>
+                <thead>
+                    <tr><th>名称</th><th>Key</th><th>状态</th><th>操作</th></tr>
+                </thead>
+                <tbody id="keys-table"></tbody>
+            </table>
+        </div>
+        
+        <!-- 修改密码 -->
+        <div class="card">
+            <div class="card-title">修改密码</div>
+            <div class="form-row">
+                <label>新密码</label>
+                <input type="password" id="new-password">
+            </div>
+            <div class="form-row">
+                <label>确认密码</label>
+                <input type="password" id="confirm-password">
+            </div>
+            <button class="btn btn-primary" onclick="changePassword()">修改密码</button>
+        </div>
+    </div>
+    
+    <script>
+        let token = localStorage.getItem('admin_token');
+        
+        function showMsg(el, msg, isError) {
+            el.textContent = msg;
+            el.className = 'msg ' + (isError ? 'msg-error' : 'msg-success');
+            el.classList.remove('hidden');
+            setTimeout(() => el.classList.add('hidden'), 3000);
+        }
+        
+        async function api(path, method = 'GET', body = null) {
+            const opts = { method, headers: { 'Authorization': 'Bearer ' + token } };
+            if (body) {
+                opts.headers['Content-Type'] = 'application/json';
+                opts.body = JSON.stringify(body);
+            }
+            const res = await fetch('/admin/api' + path, opts);
+            if (res.status === 401) {
+                localStorage.removeItem('admin_token');
+                location.reload();
+            }
+            return res.json();
+        }
+        
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const res = await fetch('/admin/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await res.json();
+            if (data.token) {
+                token = data.token;
+                localStorage.setItem('admin_token', token);
+                showAdmin();
+            } else {
+                showMsg(document.getElementById('login-msg'), data.error || '登录失败', true);
+            }
+        }
+        
+        async function showAdmin() {
+            document.getElementById('login-page').classList.add('hidden');
+            document.getElementById('admin-page').classList.remove('hidden');
+            await loadConfig();
+            await loadKeys();
+        }
+        
+        async function loadConfig() {
+            const data = await api('/config');
+            const form = document.getElementById('config-form');
+            form.innerHTML = '';
+            for (const [key, info] of Object.entries(data)) {
+                form.innerHTML += `
+                    <div class="form-row">
+                        <label title="${info.description}">${key}</label>
+                        <input type="text" data-key="${key}" value="${info.value}">
+                    </div>
+                `;
+            }
+        }
+        
+        async function saveConfig() {
+            const inputs = document.querySelectorAll('#config-form input');
+            const config = {};
+            inputs.forEach(inp => config[inp.dataset.key] = inp.value);
+            await api('/config', 'POST', config);
+            showMsg(document.getElementById('msg'), '配置已保存');
+        }
+        
+        async function loadKeys() {
+            const data = await api('/keys');
+            const tbody = document.getElementById('keys-table');
+            tbody.innerHTML = data.map(k => `
+                <tr>
+                    <td>${k.name}</td>
+                    <td class="key-text" title="${k.key}">${k.key}</td>
+                    <td><span class="badge ${k.enabled ? 'badge-green' : 'badge-red'}">${k.enabled ? '启用' : '禁用'}</span></td>
+                    <td>
+                        <button class="btn btn-sm" onclick="toggleKey(${k.id}, ${!k.enabled})">${k.enabled ? '禁用' : '启用'}</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteKey(${k.id})">删除</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        async function addKey() {
+            const name = document.getElementById('new-key-name').value;
+            await api('/keys', 'POST', { name });
+            document.getElementById('new-key-name').value = '';
+            await loadKeys();
+            showMsg(document.getElementById('msg'), 'Key 已添加');
+        }
+        
+        async function toggleKey(id, enabled) {
+            await api('/keys/' + id, 'PUT', { enabled });
+            await loadKeys();
+        }
+        
+        async function deleteKey(id) {
+            if (!confirm('确定删除此 Key？')) return;
+            await api('/keys/' + id, 'DELETE');
+            await loadKeys();
+        }
+        
+        async function changePassword() {
+            const pwd = document.getElementById('new-password').value;
+            const confirm = document.getElementById('confirm-password').value;
+            if (pwd !== confirm) {
+                showMsg(document.getElementById('msg'), '两次密码不一致', true);
+                return;
+            }
+            await api('/password', 'POST', { password: pwd });
+            document.getElementById('new-password').value = '';
+            document.getElementById('confirm-password').value = '';
+            showMsg(document.getElementById('msg'), '密码已修改');
+        }
+        
+        // 初始化
+        if (token) {
+            api('/config').then(() => showAdmin()).catch(() => {
+                localStorage.removeItem('admin_token');
+                location.reload();
+            });
+        }
+    </script>
+</body>
+</html>

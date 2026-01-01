@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
+    # 添加共享内存支持
+    procps \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
@@ -43,6 +45,15 @@ COPY . .
 # 设置 Chrome 路径
 ENV CHROME_PATH=/usr/bin/google-chrome-stable
 
+# Chrome 优化环境变量
+ENV CHROME_FLAGS="--disable-dev-shm-usage --no-sandbox --disable-gpu --single-process"
+
+# 并发配置（可通过 docker run -e 覆盖）
+ENV MAX_WORKERS=3
+ENV POOL_SIZE=2
+ENV SEMAPHORE_LIMIT=3
+
 EXPOSE 8000
 
-CMD ["python", "server.py"]
+# 使用 uvicorn 多 worker 模式
+CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
