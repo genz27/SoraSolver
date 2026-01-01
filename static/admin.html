@@ -118,7 +118,7 @@
                 opts.headers['Content-Type'] = 'application/json';
                 opts.body = JSON.stringify(body);
             }
-            const res = await fetch('/admin/api' + path, opts);
+            const res = await fetch('/api' + path, opts);
             if (res.status === 401) {
                 localStorage.removeItem('admin_token');
                 location.reload();
@@ -129,7 +129,7 @@
         async function login() {
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-            const res = await fetch('/admin/api/login', {
+            const res = await fetch('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })

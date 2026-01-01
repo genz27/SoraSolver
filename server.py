@@ -288,23 +288,23 @@ class LoginRequest(BaseModel):
     password: str
 
 
-@app.post("/admin/api/login")
+@app.post("/api/login")
 async def admin_login(req: LoginRequest):
     """管理员登录"""
     if admins.verify(req.username, req.password):
         token = secrets.token_urlsafe(32)
         admin_sessions[token] = req.username
-        return {"token": token}
-    raise HTTPException(status_code=401, detail={"error": "用户名或密码错误"})
+        return {"success": True, "token": token}
+    return {"success": False, "message": "用户名或密码错误"}
 
 
-@app.get("/admin/api/config", dependencies=[Depends(verify_admin)])
+@app.get("/api/config", dependencies=[Depends(verify_admin)])
 async def get_all_config():
     """获取所有配置"""
     return config.get_all()
 
 
-@app.post("/admin/api/config", dependencies=[Depends(verify_admin)])
+@app.post("/api/config", dependencies=[Depends(verify_admin)])
 async def update_config(data: dict):
     """更新配置"""
     for key, value in data.items():
@@ -313,34 +313,54 @@ async def update_config(data: dict):
     return {"success": True}
 
 
-@app.get("/admin/api/keys", dependencies=[Depends(verify_admin)])
+@app.get("/api/keys", dependencies=[Depends(verify_admin)])
 async def list_api_keys():
     """列出 API Keys"""
     return api_keys.list_keys()
 
 
-@app.post("/admin/api/keys", dependencies=[Depends(verify_admin)])
+@app.post("/api/keys", dependencies=[Depends(verify_admin)])
 async def add_api_key(data: dict):
     """添加 API Key"""
     key = api_keys.add_key(data.get("name"))
     return {"key": key}
 
 
-@app.put("/admin/api/keys/{key_id}", dependencies=[Depends(verify_admin)])
+@app.put("/api/keys/{key_id}", dependencies=[Depends(verify_admin)])
 async def update_api_key(key_id: int, data: dict):
     """更新 API Key"""
     api_keys.toggle_key(key_id, data.get("enabled", True))
     return {"success": True}
 
 
-@app.delete("/admin/api/keys/{key_id}", dependencies=[Depends(verify_admin)])
+@app.delete("/api/keys/{key_id}", dependencies=[Depends(verify_admin)])
 async def delete_api_key(key_id: int):
     """删除 API Key"""
     api_keys.delete_key(key_id)
     return {"success": True}
 
 
-@app.post("/admin/api/password", dependencies=[Depends(verify_admin)])
+@app.get("/api/stats", dependencies=[Depends(verify_admin)])
+async def get_admin_stats():
+    """管理后台统计"""
+    cache = get_cache()
+    pool = get_browser_pool()
+    total = stats["total_requests"]
+    
+    return {
+        "total_requests": total,
+        "success": stats["success"],
+        "failed": stats["failed"],
+        "success_rate": f"{stats['success'] / total * 100:.1f}%" if total > 0 else "0%",
+        "cache_hits": stats["cache_hits"],
+        "avg_time": round(stats["avg_time"], 2),
+        "uptime_seconds": round(time.time() - stats["start_time"], 0) if stats["start_time"] else 0,
+        "cache_stats": cache.stats(),
+        "pool_stats": pool.stats() if pool else None
+    }
+
+
+@app.post("/api/password", dependencies=[Depends(verify_admin)])
 async def change_admin_password(data: dict, username: str = Depends(verify_admin)):
     """修改密码"""
     admins.change_password(username, data["password"])
@@ -365,6 +385,12 @@ async def admin_page():
 async def login_page():
     """登录页"""
     return FileResponse(STATIC_DIR / "login.html")
+
+
+@app.get("/manage", response_class=HTMLResponse)
+async def manage_page():
+    """管理页"""
+    return FileResponse(STATIC_DIR / "manage.html")
 
 
 if __name__ == "__main__":
