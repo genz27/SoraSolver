@@ -135,12 +135,12 @@
                 body: JSON.stringify({ username, password })
             });
             const data = await res.json();
-            if (data.token) {
+            if (data.success && data.token) {
                 token = data.token;
                 localStorage.setItem('admin_token', token);
                 showAdmin();
             } else {
-                showMsg(document.getElementById('login-msg'), data.error || '登录失败', true);
+                showMsg(document.getElementById('login-msg'), data.message || '登录失败', true);
             }
         }
         

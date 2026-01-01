@@ -387,12 +387,6 @@ async def login_page():
     return FileResponse(STATIC_DIR / "login.html")
 
 
-@app.get("/manage", response_class=HTMLResponse)
-async def manage_page():
-    """管理页"""
-    return FileResponse(STATIC_DIR / "manage.html")
-
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
