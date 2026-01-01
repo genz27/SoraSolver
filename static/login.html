@@ -1,53 +1,113 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="h-full">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>登录 - Sora2API</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>登录 - Cloudflare Solver</title>
     <style>
-        @keyframes slide-up{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
-        .animate-slide-up{animation:slide-up .3s ease-out}
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: #0a0a0a; color: #e5e5e5; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+        .card { background: #171717; border: 1px solid #262626; border-radius: 12px; width: 100%; max-width: 360px; padding: 32px; }
+        h1 { font-size: 24px; color: #fff; text-align: center; margin-bottom: 8px; }
+        .subtitle { color: #737373; font-size: 14px; text-align: center; margin-bottom: 32px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; font-size: 14px; color: #a3a3a3; margin-bottom: 8px; }
+        .form-group input { width: 100%; padding: 12px 14px; background: #262626; border: 1px solid #404040; border-radius: 8px; font-size: 14px; color: #fff; transition: border-color 0.2s; }
+        .form-group input:focus { outline: none; border-color: #60a5fa; }
+        .form-group input::placeholder { color: #525252; }
+        .btn { width: 100%; padding: 12px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+        .btn:hover { background: #2563eb; }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .msg { padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; text-align: center; }
+        .msg-error { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+        .msg-success { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+        .hidden { display: none; }
+        .footer { margin-top: 24px; text-align: center; font-size: 12px; color: #525252; }
     </style>
-    <script>
-        tailwind.config={theme:{extend:{colors:{border:"hsl(0 0% 89%)",input:"hsl(0 0% 89%)",ring:"hsl(0 0% 3.9%)",background:"hsl(0 0% 100%)",foreground:"hsl(0 0% 3.9%)",primary:{DEFAULT:"hsl(0 0% 9%)",foreground:"hsl(0 0% 98%)"},secondary:{DEFAULT:"hsl(0 0% 96.1%)",foreground:"hsl(0 0% 9%)"},muted:{DEFAULT:"hsl(0 0% 96.1%)",foreground:"hsl(0 0% 45.1%)"},destructive:{DEFAULT:"hsl(0 84.2% 60.2%)",foreground:"hsl(0 0% 98%)"}}}}}
-    </script>
 </head>
-<body class="h-full bg-background text-foreground antialiased">
-    <div class="flex min-h-full flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
-        <div class="sm:mx-auto sm:w-full sm:max-w-md">
-            <div class="text-center">
-                <h1 class="text-4xl font-bold">Sora2API</h1>
-                <p class="mt-2 text-sm text-muted-foreground">管理员控制台</p>
+<body>
+    <div class="card">
+        <h1>Cloudflare Solver</h1>
+        <p class="subtitle">管理员登录</p>
+        
+        <div id="msg" class="msg hidden"></div>
+        
+        <form id="loginForm">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="username" name="username" value="admin" placeholder="请输入用户名" required>
             </div>
-        </div>
-
-        <div class="sm:mx-auto sm:w-full sm:max-w-md">
-            <div class="bg-background py-8 px-4 sm:px-10 rounded-lg">
-                <form id="loginForm" class="space-y-6">
-                    <div class="space-y-2">
-                        <label for="username" class="text-sm font-medium">账户</label>
-                        <input type="text" id="username" name="username" required class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" placeholder="请输入账户">
-                    </div>
-                    <div class="space-y-2">
-                        <label for="password" class="text-sm font-medium">密码</label>
-                        <input type="password" id="password" name="password" required class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" placeholder="请输入密码">
-                    </div>
-                    <button type="submit" id="loginButton" class="inline-flex items-center justify-center rounded-md font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 w-full disabled:opacity-50">登录</button>
-                </form>
-                
-                <div class="mt-6 text-center text-xs text-muted-foreground">
-                    <p>Sora2API © 2025</p>
-                </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="password" name="password" placeholder="请输入密码" required>
             </div>
-        </div>
+            <button type="submit" class="btn" id="submitBtn">登录</button>
+        </form>
+        
+        <div class="footer">Cloudflare Solver © 2025</div>
     </div>
-
+    
     <script>
-        const form=document.getElementById('loginForm'),btn=document.getElementById('loginButton');
-        form.addEventListener('submit',async(e)=>{e.preventDefault();btn.disabled=true;btn.textContent='登录中...';try{const fd=new FormData(form),r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:fd.get('username'),password:fd.get('password')})});const d=await r.json();d.success?(localStorage.setItem('admin_token',d.token),location.href='/admin'):showToast(d.message||'登录失败','error')}catch(e){showToast('网络错误，请稍后重试','error')}finally{btn.disabled=false;btn.textContent='登录'}});
-        function showToast(m,t='error'){const d=document.createElement('div'),bc={success:'bg-green-600',error:'bg-destructive',info:'bg-primary'};d.className=`fixed bottom-4 right-4 ${bc[t]||bc.error} text-white px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium z-50 animate-slide-up`;d.textContent=m;document.body.appendChild(d);setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.parentNode&&document.body.removeChild(d),300)},2000)}
-        window.addEventListener('DOMContentLoaded',()=>{const t=localStorage.getItem('admin_token');t&&fetch('/api/stats',{headers:{Authorization:`Bearer ${t}`}}).then(r=>{if(r.ok)location.href='/admin'})});
+        const form = document.getElementById('loginForm');
+        const btn = document.getElementById('submitBtn');
+        const msgEl = document.getElementById('msg');
+        
+        function showMsg(text, isError = true) {
+            msgEl.textContent = text;
+            msgEl.className = 'msg ' + (isError ? 'msg-error' : 'msg-success');
+            msgEl.classList.remove('hidden');
+        }
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            btn.disabled = true;
+            btn.textContent = '登录中...';
+            msgEl.classList.add('hidden');
+            
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: document.getElementById('username').value,
+                        password: document.getElementById('password').value
+                    })
+                });
+                
+                const data = await res.json();
+                console.log('Login response:', data);
+                
+                if (data.success && data.token) {
+                    localStorage.setItem('admin_token', data.token);
+                    showMsg('登录成功，正在跳转...', false);
+                    setTimeout(() => {
+                        window.location.href = '/admin';
+                    }, 500);
+                } else {
+                    showMsg(data.message || '用户名或密码错误');
+                }
+            } catch (err) {
+                console.error('Login error:', err);
+                showMsg('网络错误，请稍后重试');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '登录';
+            }
+        });
+        
+        // 检查是否已登录
+        window.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('admin_token');
+            if (token) {
+                fetch('/api/stats', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                }).then(r => {
+                    if (r.ok) {
+                        window.location.href = '/admin';
+                    }
+                }).catch(() => {});
+            }
+        });
     </script>
 </body>
 </html>
