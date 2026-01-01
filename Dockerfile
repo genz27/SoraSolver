@@ -53,7 +53,7 @@ ENV MAX_WORKERS=3
 ENV POOL_SIZE=2
 ENV SEMAPHORE_LIMIT=3
 
-EXPOSE 8000
+EXPOSE 8005
 
 # 使用 uvicorn 多 worker 模式
-CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8005", "--workers", "1"]

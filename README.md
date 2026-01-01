@@ -13,14 +13,20 @@
 
 ## 部署
 
+一句话部署：
+```bash
+docker run -d --name cloudflare-solver -p 8005:8005 --shm-size=2g -v ./data:/app/data ghcr.io/genz27/sorasolver:latest
+```
+
+或使用 docker-compose：
 ```bash
 docker-compose up -d
 ```
 
 访问：
-- 首页: http://localhost:8000
-- 管理后台: http://localhost:8000/admin
-- API 文档: http://localhost:8000/docs
+- 首页: http://localhost:8005
+- 管理后台: http://localhost:8005/admin
+- API 文档: http://localhost:8005/docs
 
 ## 管理后台
 
@@ -43,10 +49,10 @@ docker-compose up -d
 | skip_cache | 跳过缓存 | false |
 
 ```bash
-curl "http://localhost:8000/v1/challenge"
+curl "http://localhost:8005/v1/challenge"
 
 # 使用 API Key（开启验证时）
-curl -H "X-API-Key: your-key" "http://localhost:8000/v1/challenge"
+curl -H "X-API-Key: your-key" "http://localhost:8005/v1/challenge"
 ```
 
 ### API Key 验证
