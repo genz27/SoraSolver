@@ -7,6 +7,7 @@ import uuid
 import asyncio
 import secrets
 import hashlib
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from contextlib import asynccontextmanager
@@ -14,6 +15,10 @@ from fastapi import FastAPI, HTTPException, Query, Request, Depends, Header
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+# 获取项目根目录
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
 from cloudflare_solver import (
     CloudflareSolver, CloudflareError,
     init_browser_pool, get_browser_pool, get_cache
@@ -347,13 +352,19 @@ async def change_admin_password(data: dict, username: str = Depends(verify_admin
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """首页"""
-    return FileResponse("static/index.html")
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page():
     """管理后台"""
-    return FileResponse("static/admin.html")
+    return FileResponse(STATIC_DIR / "admin.html")
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page():
+    """登录页"""
+    return FileResponse(STATIC_DIR / "login.html")
 
 
 if __name__ == "__main__":
