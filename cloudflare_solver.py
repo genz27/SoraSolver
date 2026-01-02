@@ -169,7 +169,7 @@ class BrowserPool:
         # 随机 User-Agent
         options.set_user_agent(self._ua.chrome)
         
-        # 无头模式
+        # 无头模式 - 使用新版无头模式更难被检测
         if self._headless:
             options.set_argument("--headless=new")
         
@@ -178,7 +178,7 @@ class BrowserPool:
         height = random.randint(800, 1080)
         options.set_argument(f"--window-size={width},{height}")
         
-        # 反检测设置（Docker 环境需要更多参数）
+        # 反检测设置
         options.set_argument("--disable-blink-features=AutomationControlled")
         options.set_argument("--no-sandbox")
         options.set_argument("--disable-dev-shm-usage")
@@ -186,9 +186,15 @@ class BrowserPool:
         options.set_argument("--disable-infobars")
         options.set_argument("--disable-extensions")
         options.set_argument("--lang=en-US,en")
+        options.set_argument("--disable-web-security")
+        options.set_argument("--allow-running-insecure-content")
         
+        # 更多反检测
         options.set_pref("credentials_enable_service", False)
         options.set_pref("profile.password_manager_enabled", False)
+        options.set_pref("webrtc.ip_handling_policy", "disable_non_proxied_udp")
+        options.set_pref("webrtc.multiple_routes_enabled", False)
+        options.set_pref("webrtc.nonproxied_udp_enabled", False)
         
         return ChromiumPage(options)
     
@@ -394,24 +400,38 @@ class CloudflareSolver:
                 return cached
         
         last_error = None
+        print(f"🚀 开始获取 cf_clearance, URL: {website_url}, 最大重试: {max_retries}")
         
         for attempt in range(max_retries + 1):
             page = None
             
             try:
                 if attempt > 0:
-                    print(f"🔄 重试第 {attempt} 次，创建新浏览器...")
+                    # 重试前等待一段时间
+                    wait_time = random.randint(3000, 5000)
+                    print(f"🔄 第 {attempt}/{max_retries} 次重试，等待 {wait_time/1000:.1f}s...")
+                    self._random_delay(wait_time, wait_time + 1000)
+                else:
+                    print(f"🆕 第 1 次尝试...")
                 
-                # 每次都创建新的浏览器实例，不使用池
+                # 每次都创建新的浏览器实例
+                print(f"  📂 创建新浏览器实例...")
                 page = self._create_page()
+                print(f"  ✓ 浏览器已启动")
                 
-                print(f"🌐 正在访问: {website_url}")
+                print(f"  🌐 访问: {website_url}")
                 page.get(website_url)
                 
                 # 等待页面加载
+                print(f"  ⏳ 等待页面加载...")
                 self._random_delay(2000, 3000)
                 
+                # 获取页面信息
+                title = page.title if page.title else "无标题"
+                print(f"  📄 页面标题: {title}")
+                
                 # 检查是否需要人机验证
+                print(f"  🔍 检查 cf_clearance...")
                 cf_clearance = self._check_clearance(page)
                 
                 if cf_clearance:
@@ -428,64 +448,78 @@ class CloudflareSolver:
                     if self.use_cache:
                         get_cache().set(website_url, solution, self.proxy)
                     
-                    print(f"✅ 获取 cf_clearance 成功")
+                    print(f"✅ 成功获取 cf_clearance!")
+                    print(f"  📝 cf_clearance: {cf_clearance[:50]}...")
                     return solution
                 else:
                     # 遇到人机验证，关闭浏览器重试
-                    print(f"⚠️ 遇到人机验证，关闭浏览器...")
-                    raise CloudflareError("需要人机验证")
+                    print(f"  ❌ 未获取到 cf_clearance，准备重试...")
+                    raise CloudflareError("需要人机验证或超时")
                 
             except Exception as e:
                 last_error = e
+                print(f"  ❌ 本次尝试失败: {e}")
             finally:
                 # 每次都关闭浏览器
                 if page:
                     try:
                         page.quit()
-                        print(f"🔒 浏览器已关闭")
+                        print(f"  🔒 浏览器已关闭")
                     except:
                         pass
                     page = None
         
+        print(f"❌ 所有 {max_retries + 1} 次尝试均失败")
         raise CloudflareError(f"重试 {max_retries} 次后仍然失败: {last_error}")
     
-    def _check_clearance(self, page, wait_time: int = 10) -> Optional[str]:
+    def _check_clearance(self, page, wait_time: int = 8) -> Optional[str]:
         """检查是否获取到 cf_clearance，如果遇到人机验证返回 None"""
         start_time = time.time()
+        check_count = 0
         
         while time.time() - start_time < wait_time:
+            check_count += 1
+            elapsed = time.time() - start_time
+            
             try:
-                # 检查是否有人机验证
-                page_text = page.html.lower() if page.html else ""
-                title = page.title.lower() if page.title else ""
-                
-                is_challenge = (
-                    "确认您是真人" in page_text or
-                    "verify you are human" in page_text or
-                    "请完成以下操作" in page_text
-                )
-                
-                if is_challenge:
-                    return None
-                
-                # 检查 cookie
-                for cookie in page.cookies():
+                # 先检查 cookie
+                cookies = page.cookies()
+                for cookie in cookies:
                     if cookie["name"] == "cf_clearance":
+                        print(f"    ✓ 找到 cf_clearance (第{check_count}次检查, {elapsed:.1f}s)")
                         return cookie["value"]
                 
-                # 如果页面不是验证页面且没有 cf_clearance，继续等待
-                if "just a moment" not in title and "checking" not in title:
-                    # 可能已经通过，再检查一次 cookie
-                    self._random_delay(500, 1000)
-                    for cookie in page.cookies():
-                        if cookie["name"] == "cf_clearance":
-                            return cookie["value"]
+                # 获取页面状态
+                title = page.title.lower() if page.title else ""
+                page_text = page.html if page.html else ""
                 
-            except:
-                pass
+                # 检查是否有人机验证（需要点击的那种）
+                is_manual_challenge = (
+                    "确认您是真人" in page_text or
+                    "verify you are human" in page_text
+                )
+                
+                if is_manual_challenge:
+                    print(f"    ⚠️ 检测到人机验证页面 (第{check_count}次检查, {elapsed:.1f}s)")
+                    return None
+                
+                # 检查是否在自动验证中
+                is_auto_checking = "just a moment" in title or "checking" in title
+                
+                if is_auto_checking:
+                    if check_count == 1:
+                        print(f"    ⏳ 页面正在自动验证中...")
+                elif check_count == 1:
+                    print(f"    📄 页面已加载，等待 cookie...")
+                
+            except Exception as e:
+                if check_count == 1:
+                    print(f"    ⚠️ 检查出错: {e}")
             
             self._random_delay(500, 1000)
         
+        # 超时
+        print(f"    ⏰ 等待超时 ({wait_time}s)，共检查 {check_count} 次")
         return None
 
 
