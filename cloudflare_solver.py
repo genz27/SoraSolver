@@ -264,8 +264,6 @@ class BrowserPool:
                 print(f"  ✗ 实例 {i+1}/{count} 失败: {e}")
         
         print(f"🔥 预热完成，可用实例: {len(self._available)}")
-        
-        print(f"🔥 预热完成，可用实例: {len(self._available)}")
     
     def shutdown(self):
         """关闭所有实例"""
@@ -383,9 +381,15 @@ class CloudflareSolver:
         options.set_argument("--disable-infobars")
         options.set_argument("--disable-extensions")
         options.set_argument("--lang=en-US,en")
+        options.set_argument("--disable-web-security")
+        options.set_argument("--allow-running-insecure-content")
         
+        # 更多反检测
         options.set_pref("credentials_enable_service", False)
         options.set_pref("profile.password_manager_enabled", False)
+        options.set_pref("webrtc.ip_handling_policy", "disable_non_proxied_udp")
+        options.set_pref("webrtc.multiple_routes_enabled", False)
+        options.set_pref("webrtc.nonproxied_udp_enabled", False)
         
         return ChromiumPage(options)
     
