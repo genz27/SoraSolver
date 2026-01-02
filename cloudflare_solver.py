@@ -231,14 +231,14 @@ class BrowserPool:
                 page = self._available.pop(0)
                 self._stats["reused"] += 1
                 remaining = len(self._available)
-                print(f"  ♻️ 从池子取出浏览器，剩余: {remaining}")
+                print(f"    ♻️ 从池子取出浏览器，剩余: {remaining}")
                 # 异步补充
                 self._async_replenish()
                 return page
             
             # 池子空了，触发补充并等待
             self._stats["waiting"] += 1
-            print(f"  ⏳ 池子空了，等待浏览器... (等待中: {self._stats['waiting']})")
+            print(f"    ⏳ 池子空了，等待浏览器... (等待中: {self._stats['waiting']})")
             self._async_replenish()
             
             # 等待有可用的浏览器
@@ -247,7 +247,7 @@ class BrowserPool:
                 remaining_time = timeout - (time.time() - start_time)
                 if remaining_time <= 0:
                     self._stats["waiting"] -= 1
-                    print(f"  ⏰ 等待超时，创建新浏览器...")
+                    print(f"    ⏰ 等待超时 ({timeout}s)，创建新浏览器...")
                     break
                 self._condition.wait(timeout=min(remaining_time, 1.0))
             
@@ -256,19 +256,19 @@ class BrowserPool:
             if self._available:
                 page = self._available.pop(0)
                 self._stats["reused"] += 1
-                print(f"  ♻️ 等待后获取到浏览器，剩余: {len(self._available)}")
+                print(f"    ♻️ 等待后获取到浏览器，剩余: {len(self._available)}")
                 self._async_replenish()
                 return page
         
         # 超时了还没有，同步创建一个
-        print("  🆕 超时，同步创建新浏览器...")
+        print("    🆕 超时，同步创建新浏览器...")
         self._stats["created"] += 1
         try:
             page = self._create_page()
             self._async_replenish()
             return page
         except Exception as e:
-            print(f"  ❌ 创建浏览器失败: {e}")
+            print(f"    ❌ 创建浏览器失败: {e}")
             self._stats["failed"] += 1
             return None
     
@@ -542,13 +542,21 @@ class CloudflareSolver:
                         return cookie["value"]
                 
                 # 获取页面状态
-                title = page.title.lower() if page.title else ""
-                page_text = page.html if page.html else ""
+                title = (page.title or "").lower()
+                page_text = page.html or ""
+                page_text_lower = page_text.lower()
                 
-                # 检查是否有人机验证（需要点击的那种）
+                # 检查是否有人机验证（需要点击的那种）- 中英文都检测
                 is_manual_challenge = (
                     "确认您是真人" in page_text or
-                    "verify you are human" in page_text
+                    "verify you are human" in page_text_lower or
+                    "verify you're human" in page_text_lower or
+                    "please verify" in page_text_lower or
+                    "human verification" in page_text_lower or
+                    "click to verify" in page_text_lower or
+                    "i am human" in page_text_lower or
+                    "i'm not a robot" in page_text_lower or
+                    "turnstile" in page_text_lower
                 )
                 
                 if is_manual_challenge:
@@ -556,7 +564,11 @@ class CloudflareSolver:
                     return None
                 
                 # 检查是否在自动验证中
-                is_auto_checking = "just a moment" in title or "checking" in title
+                is_auto_checking = (
+                    "just a moment" in title or 
+                    "checking" in title or
+                    "please wait" in title
+                )
                 
                 if is_auto_checking:
                     if check_count == 1:
