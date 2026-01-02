@@ -476,13 +476,14 @@ class CloudflareSolver:
         
         return False
     
-    def solve(self, website_url: str, skip_cache: bool = False) -> CloudflareSolution:
+    def solve(self, website_url: str, skip_cache: bool = False, max_retries: int = 2) -> CloudflareSolution:
         """
         解决 Cloudflare Turnstile challenge.
         
         Args:
             website_url: 目标页面 URL
             skip_cache: 跳过缓存，强制获取新的 cookie
+            max_retries: 最大重试次数
         
         Returns:
             CloudflareSolution 包含 cf_clearance cookie
@@ -495,49 +496,80 @@ class CloudflareSolver:
                 print(f"📦 使用缓存的 cf_clearance (剩余 {1800 - (datetime.now() - cached.created_at).total_seconds():.0f}s)")
                 return cached
         
-        # 获取浏览器实例
-        pool = get_browser_pool() if self.use_pool else None
-        page = None
+        last_error = None
         
-        try:
-            if pool:
-                page = pool.acquire(self.proxy)
-            else:
-                page = self._create_page()
+        for attempt in range(max_retries + 1):
+            pool = get_browser_pool() if self.use_pool else None
+            page = None
             
-            self._random_delay(500, 1500)
-            
-            print(f"🌐 正在访问: {website_url}")
-            page.get(website_url)
-            
-            self._inject_stealth_js(page)
-            self._random_delay(1000, 2000)
-            self._simulate_mouse_movement(page)
-            
-            cf_clearance = self._wait_for_clearance(page)
-            
-            cookies = {cookie["name"]: cookie["value"] for cookie in page.cookies()}
-            user_agent = page.run_js("return navigator.userAgent")
-            
-            solution = CloudflareSolution(
-                cf_clearance=cf_clearance,
-                cookies=cookies,
-                user_agent=user_agent,
-                url=website_url
-            )
-            
-            # 存入缓存
-            if self.use_cache:
-                get_cache().set(website_url, solution, self.proxy)
-            
-            return solution
-            
-        finally:
-            if page:
+            try:
+                if attempt > 0:
+                    print(f"🔄 重试第 {attempt} 次...")
+                    self._random_delay(1000, 2000)
+                
                 if pool:
-                    pool.release(page, self.proxy)
+                    page = pool.acquire(self.proxy)
                 else:
-                    page.quit()
+                    page = self._create_page()
+                
+                self._random_delay(500, 1500)
+                
+                print(f"🌐 正在访问: {website_url}")
+                page.get(website_url)
+                
+                self._inject_stealth_js(page)
+                self._random_delay(1000, 2000)
+                self._simulate_mouse_movement(page)
+                
+                cf_clearance = self._wait_for_clearance(page)
+                
+                cookies = {cookie["name"]: cookie["value"] for cookie in page.cookies()}
+                user_agent = page.run_js("return navigator.userAgent")
+                
+                solution = CloudflareSolution(
+                    cf_clearance=cf_clearance,
+                    cookies=cookies,
+                    user_agent=user_agent,
+                    url=website_url
+                )
+                
+                # 存入缓存
+                if self.use_cache:
+                    get_cache().set(website_url, solution, self.proxy)
+                
+                return solution
+                
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                # 连接断开或页面崩溃，可以重试
+                if "disconnected" in error_msg or "connection" in error_msg or "crashed" in error_msg:
+                    print(f"⚠️ 浏览器连接断开，准备重试...")
+                    if page:
+                        try:
+                            if pool:
+                                # 不归还到池，直接关闭
+                                page.quit()
+                            else:
+                                page.quit()
+                        except:
+                            pass
+                        page = None
+                    continue
+                else:
+                    raise
+            finally:
+                if page:
+                    try:
+                        if pool:
+                            pool.release(page, self.proxy)
+                        else:
+                            page.quit()
+                    except:
+                        pass
+        
+        # 所有重试都失败
+        raise CloudflareError(f"重试 {max_retries} 次后仍然失败: {last_error}")
     
     def _wait_for_clearance(self, page) -> str:
         """等待 cf_clearance cookie 出现"""
