@@ -53,15 +53,17 @@ def init_db():
         )
     """)
     
-    # 代理池表
+    # 请求日志表
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS proxies (
+        CREATE TABLE IF NOT EXISTS request_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            address TEXT UNIQUE NOT NULL,
-            name TEXT,
-            enabled INTEGER DEFAULT 1,
-            success_count INTEGER DEFAULT 0,
-            fail_count INTEGER DEFAULT 0,
+            request_id TEXT,
+            url TEXT,
+            proxy TEXT,
+            success INTEGER,
+            error TEXT,
+            elapsed_seconds REAL,
+            from_cache INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -74,6 +76,7 @@ def init_db():
         "cache_ttl": ("1800", "缓存过期时间(秒)"),
         "require_api_key": ("0", "是否需要API Key验证(0/1)"),
         "proxy_pool_enabled": ("0", "是否启用代理池(0/1)"),
+        "proxy_list": ("", "代理列表(一行一个)"),
     }
     
     for key, (value, desc) in defaults.items():
@@ -250,32 +253,49 @@ class AdminManager:
 
 
 class ProxyPoolManager:
-    """代理池管理器"""
+    """代理池管理器 - 简化版，从配置读取代理列表"""
     
     _current_index = 0
     _lock = threading.Lock()
     
-    def list_proxies(self) -> list:
-        """列出所有代理"""
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, address, name, enabled, success_count, fail_count, created_at FROM proxies ORDER BY id")
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+    def parse_proxy(self, line: str) -> Optional[str]:
+        """
+        解析代理格式，支持多种格式：
+        - ip:port
+        - http://ip:port
+        - socks5://ip:port
+        - user:pass@ip:port
+        - http://user:pass@ip:port
+        """
+        line = line.strip()
+        if not line or line.startswith('#'):
+            return None
+        
+        # 已经是完整格式
+        if '://' in line:
+            return line
+        
+        # 简单格式 ip:port 或 user:pass@ip:port
+        if '@' in line:
+            # user:pass@ip:port -> http://user:pass@ip:port
+            return f"http://{line}"
+        else:
+            # ip:port -> http://ip:port
+            return f"http://{line}"
     
-    def get_enabled_proxies(self) -> list:
-        """获取所有启用的代理"""
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT address FROM proxies WHERE enabled = 1 ORDER BY id")
-        rows = cursor.fetchall()
-        conn.close()
-        return [row["address"] for row in rows]
+    def get_proxy_list(self) -> list:
+        """获取所有代理"""
+        proxy_text = config.get("proxy_list", "")
+        proxies = []
+        for line in proxy_text.split('\n'):
+            proxy = self.parse_proxy(line)
+            if proxy:
+                proxies.append(proxy)
+        return proxies
     
     def get_next_proxy(self) -> Optional[str]:
         """轮询获取下一个代理"""
-        proxies = self.get_enabled_proxies()
+        proxies = self.get_proxy_list()
         if not proxies:
             return None
         
@@ -284,51 +304,43 @@ class ProxyPoolManager:
             self._current_index += 1
         return proxy
     
-    def add_proxy(self, address: str, name: str = None) -> bool:
-        """添加代理"""
-        conn = get_db()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "INSERT INTO proxies (address, name) VALUES (?, ?)",
-                (address, name or "")
-            )
-            conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            return False
-        finally:
-            conn.close()
+    def get_proxy_count(self) -> int:
+        """获取代理数量"""
+        return len(self.get_proxy_list())
+
+
+class RequestLogger:
+    """请求日志管理器"""
     
-    def delete_proxy(self, proxy_id: int):
-        """删除代理"""
+    def log(self, request_id: str, url: str, proxy: str, success: bool, 
+            error: str = None, elapsed: float = 0, from_cache: bool = False):
+        """记录请求日志"""
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM proxies WHERE id = ?", (proxy_id,))
+        cursor.execute("""
+            INSERT INTO request_logs (request_id, url, proxy, success, error, elapsed_seconds, from_cache)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (request_id, url, proxy, 1 if success else 0, error, elapsed, 1 if from_cache else 0))
         conn.commit()
         conn.close()
     
-    def toggle_proxy(self, proxy_id: int, enabled: bool):
-        """启用/禁用代理"""
+    def get_logs(self, limit: int = 100) -> list:
+        """获取最近的日志"""
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("UPDATE proxies SET enabled = ? WHERE id = ?", (1 if enabled else 0, proxy_id))
-        conn.commit()
+        cursor.execute("""
+            SELECT id, request_id, url, proxy, success, error, elapsed_seconds, from_cache, created_at 
+            FROM request_logs ORDER BY id DESC LIMIT ?
+        """, (limit,))
+        rows = cursor.fetchall()
         conn.close()
+        return [dict(row) for row in rows]
     
-    def record_success(self, address: str):
-        """记录成功"""
+    def clear_logs(self):
+        """清空日志"""
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("UPDATE proxies SET success_count = success_count + 1 WHERE address = ?", (address,))
-        conn.commit()
-        conn.close()
-    
-    def record_fail(self, address: str):
-        """记录失败"""
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE proxies SET fail_count = fail_count + 1 WHERE address = ?", (address,))
+        cursor.execute("DELETE FROM request_logs")
         conn.commit()
         conn.close()
 
@@ -338,3 +350,4 @@ config = ConfigManager()
 api_keys = APIKeyManager()
 admins = AdminManager()
 proxy_pool = ProxyPoolManager()
+request_logger = RequestLogger()

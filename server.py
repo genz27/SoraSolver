@@ -23,7 +23,7 @@ from cloudflare_solver import (
     CloudflareSolver, CloudflareError,
     init_browser_pool, get_browser_pool, get_cache
 )
-from config import init_db, config, api_keys, admins, proxy_pool, ConfigManager
+from config import init_db, config, api_keys, admins, proxy_pool, request_logger, ConfigManager
 
 # 并发控制
 request_semaphore: Optional[asyncio.Semaphore] = None
@@ -186,6 +186,8 @@ async def solve_challenge(
                     elapsed = time.time() - start_time
                     stats["success"] += 1
                     stats["cache_hits"] += 1
+                    # 记录日志
+                    request_logger.log(request_id, url, use_proxy, True, None, elapsed, True)
                     return ChallengeResponse(
                         success=True,
                         cf_clearance=cached.cf_clearance,
@@ -216,9 +218,8 @@ async def solve_challenge(
                 stats["total_time"] += elapsed
                 stats["avg_time"] = stats["total_time"] / stats["success"]
                 
-                # 记录代理成功
-                if use_proxy:
-                    proxy_pool.record_success(use_proxy)
+                # 记录日志
+                request_logger.log(request_id, url, use_proxy, True, None, elapsed, False)
                 
                 return ChallengeResponse(
                     success=True,
@@ -231,15 +232,15 @@ async def solve_challenge(
                 )
                 
             except CloudflareError as e:
+                elapsed = time.time() - start_time
                 stats["failed"] += 1
-                # 记录代理失败
-                if use_proxy:
-                    proxy_pool.record_fail(use_proxy)
+                # 记录日志
+                request_logger.log(request_id, url, use_proxy, False, str(e), elapsed, False)
                 raise HTTPException(status_code=500, detail={"success": False, "error": str(e), "request_id": request_id})
             except Exception as e:
+                elapsed = time.time() - start_time
                 stats["failed"] += 1
-                if use_proxy:
-                    proxy_pool.record_fail(use_proxy)
+                request_logger.log(request_id, url, use_proxy, False, str(e), elapsed, False)
                 raise HTTPException(status_code=500, detail={"success": False, "error": str(e), "request_id": request_id})
             finally:
                 stats["processing"] -= 1
@@ -383,38 +384,18 @@ async def change_admin_password(data: dict, username: str = Depends(verify_admin
     return {"success": True}
 
 
-# ============ 代理池 API ============
+# ============ 日志 API ============
 
-@app.get("/api/proxies", dependencies=[Depends(verify_admin)])
-async def list_proxies():
-    """列出所有代理"""
-    return proxy_pool.list_proxies()
-
-
-@app.post("/api/proxies", dependencies=[Depends(verify_admin)])
-async def add_proxy(data: dict):
-    """添加代理"""
-    address = data.get("address", "").strip()
-    if not address:
-        raise HTTPException(status_code=400, detail="代理地址不能为空")
-    
-    success = proxy_pool.add_proxy(address, data.get("name"))
-    if not success:
-        raise HTTPException(status_code=400, detail="代理已存在")
-    return {"success": True}
+@app.get("/api/logs", dependencies=[Depends(verify_admin)])
+async def get_logs(limit: int = 100):
+    """获取请求日志"""
+    return request_logger.get_logs(limit)
 
 
-@app.put("/api/proxies/{proxy_id}", dependencies=[Depends(verify_admin)])
-async def update_proxy(proxy_id: int, data: dict):
-    """更新代理状态"""
-    proxy_pool.toggle_proxy(proxy_id, data.get("enabled", True))
-    return {"success": True}
-
-
-@app.delete("/api/proxies/{proxy_id}", dependencies=[Depends(verify_admin)])
-async def delete_proxy(proxy_id: int):
-    """删除代理"""
-    proxy_pool.delete_proxy(proxy_id)
+@app.delete("/api/logs", dependencies=[Depends(verify_admin)])
+async def clear_logs():
+    """清空日志"""
+    request_logger.clear_logs()
     return {"success": True}
 
 

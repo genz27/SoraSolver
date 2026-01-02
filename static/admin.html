@@ -7,35 +7,35 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: system-ui, sans-serif; background: #0a0a0a; color: #e5e5e5; min-height: 100vh; }
-        .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+        .container { max-width: 1000px; margin: 0 auto; padding: 24px; }
         h1 { font-size: 22px; margin-bottom: 24px; color: #fff; display: flex; align-items: center; gap: 16px; }
         h1 a { font-size: 14px; color: #60a5fa; text-decoration: none; }
         h1 a:hover { text-decoration: underline; }
         .card { background: #171717; border: 1px solid #262626; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
-        .card-title { font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #262626; }
+        .card-title { font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #262626; display: flex; justify-content: space-between; align-items: center; }
         .form-row { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
         .form-row label { width: 140px; font-size: 14px; color: #a3a3a3; flex-shrink: 0; }
-        .form-row input { flex: 1; padding: 10px 14px; background: #262626; border: 1px solid #404040; border-radius: 6px; font-size: 14px; color: #fff; }
-        .form-row input:focus { outline: none; border-color: #60a5fa; }
-        .form-row input::placeholder { color: #737373; }
+        .form-row input, .form-row textarea { flex: 1; padding: 10px 14px; background: #262626; border: 1px solid #404040; border-radius: 6px; font-size: 14px; color: #fff; }
+        .form-row input:focus, .form-row textarea:focus { outline: none; border-color: #60a5fa; }
+        .form-row textarea { min-height: 120px; resize: vertical; font-family: monospace; }
         .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 500; transition: opacity 0.2s; }
         .btn:hover { opacity: 0.85; }
         .btn-primary { background: #3b82f6; color: #fff; }
         .btn-danger { background: #ef4444; color: #fff; }
         .btn-sm { padding: 6px 12px; font-size: 12px; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #262626; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #262626; }
         th { color: #a3a3a3; font-weight: 500; }
         td { color: #e5e5e5; }
-        .key-text { font-family: monospace; font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; color: #a3a3a3; }
+        .key-text { font-family: monospace; font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: #a3a3a3; }
         .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
         .badge-green { background: rgba(34,197,94,0.15); color: #4ade80; }
         .badge-red { background: rgba(239,68,68,0.15); color: #f87171; }
+        .badge-gray { background: rgba(156,163,175,0.15); color: #9ca3af; }
         .msg { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
         .msg-success { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
         .msg-error { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
         .hidden { display: none; }
-        /* 开关样式 */
         .switch { position: relative; display: inline-block; width: 44px; min-width: 44px; height: 24px; }
         .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
         .slider { position: absolute; cursor: pointer; top: 0; left: 0; width: 44px; height: 24px; background: #404040; border-radius: 24px; transition: 0.3s; }
@@ -43,6 +43,10 @@
         .switch input:checked + .slider { background: #3b82f6; }
         .switch input:checked + .slider:before { transform: translateX(20px); }
         .form-row .switch { flex: none; }
+        .hint { font-size: 12px; color: #737373; margin-top: 8px; }
+        .log-table { max-height: 400px; overflow-y: auto; }
+        .log-table td { font-size: 12px; padding: 8px 10px; }
+        .error-text { color: #f87171; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -55,6 +59,25 @@
             <div class="card-title">系统配置</div>
             <div id="config-form"></div>
             <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                代理池
+                <span style="font-size:12px;color:#737373;" id="proxy-count">0 个代理</span>
+            </div>
+            <div class="form-row" style="align-items:flex-start;">
+                <label style="padding-top:10px;">代理列表</label>
+                <textarea id="proxy-list" placeholder="一行一个代理，支持格式：
+ip:port
+http://ip:port
+socks5://ip:port
+user:pass@ip:port
+http://user:pass@ip:port
+# 开头的行为注释"></textarea>
+            </div>
+            <div class="hint">支持 HTTP/HTTPS/SOCKS5 代理，一行一个，# 开头为注释</div>
+            <button class="btn btn-primary" style="margin-top:16px;" onclick="saveProxyList()">保存代理列表</button>
         </div>
 
         <div class="card">
@@ -72,6 +95,21 @@
         </div>
         
         <div class="card">
+            <div class="card-title">
+                请求日志
+                <button class="btn btn-sm btn-danger" onclick="clearLogs()">清空日志</button>
+            </div>
+            <div class="log-table">
+                <table>
+                    <thead>
+                        <tr><th>时间</th><th>ID</th><th>URL</th><th>代理</th><th>状态</th><th>耗时</th><th>错误</th></tr>
+                    </thead>
+                    <tbody id="logs-table"></tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
             <div class="card-title">修改密码</div>
             <div class="form-row">
                 <label>新密码</label>
@@ -83,30 +121,11 @@
             </div>
             <button class="btn btn-primary" onclick="changePassword()">修改密码</button>
         </div>
-        
-        <div class="card">
-            <div class="card-title">代理池管理</div>
-            <div class="form-row" style="margin-bottom:20px;">
-                <input type="text" id="new-proxy-address" placeholder="代理地址 (如: 127.0.0.1:7890)" style="flex:2;">
-                <input type="text" id="new-proxy-name" placeholder="名称（可选）" style="flex:1;">
-                <button class="btn btn-primary" onclick="addProxy()">添加代理</button>
-            </div>
-            <table>
-                <thead>
-                    <tr><th>名称</th><th>地址</th><th>成功/失败</th><th>状态</th><th>操作</th></tr>
-                </thead>
-                <tbody id="proxies-table"></tbody>
-            </table>
-        </div>
     </div>
     
     <script>
         let token = localStorage.getItem('admin_token');
-        
-        // 未登录直接跳转到登录页
-        if (!token) {
-            window.location.href = '/login';
-        }
+        if (!token) window.location.href = '/login';
         
         function showMsg(msg, isError = false) {
             const el = document.getElementById('msg');
@@ -142,7 +161,6 @@
             const form = document.getElementById('config-form');
             form.innerHTML = '';
             
-            // 配置项中文名映射
             const labels = {
                 'max_workers': '并发浏览器数',
                 'pool_size': '浏览器池大小',
@@ -153,9 +171,9 @@
             };
             
             for (const [key, info] of Object.entries(data)) {
+                if (key === 'proxy_list') continue; // 代理列表单独处理
                 const label = labels[key] || key;
                 if (key === 'require_api_key' || key === 'proxy_pool_enabled') {
-                    // 开关样式
                     const checked = info.value === '1' ? 'checked' : '';
                     form.innerHTML += `
                         <div class="form-row">
@@ -175,20 +193,39 @@
                     `;
                 }
             }
+            
+            // 加载代理列表
+            if (data.proxy_list) {
+                document.getElementById('proxy-list').value = data.proxy_list.value || '';
+                updateProxyCount();
+            }
         }
+        
+        function updateProxyCount() {
+            const text = document.getElementById('proxy-list').value;
+            const count = text.split('\n').filter(line => line.trim() && !line.trim().startsWith('#')).length;
+            document.getElementById('proxy-count').textContent = count + ' 个代理';
+        }
+        
+        document.getElementById('proxy-list').addEventListener('input', updateProxyCount);
         
         async function saveConfig() {
             const cfg = {};
-            // 处理文本输入
             document.querySelectorAll('#config-form input[type="text"]').forEach(inp => {
                 cfg[inp.dataset.key] = inp.value;
             });
-            // 处理开关
             document.querySelectorAll('#config-form input[type="checkbox"]').forEach(inp => {
                 cfg[inp.dataset.key] = inp.checked ? '1' : '0';
             });
             await api('/config', 'POST', cfg);
             showMsg('配置已保存');
+        }
+        
+        async function saveProxyList() {
+            const proxyList = document.getElementById('proxy-list').value;
+            await api('/config', 'POST', { proxy_list: proxyList });
+            showMsg('代理列表已保存');
+            updateProxyCount();
         }
         
         async function loadKeys() {
@@ -227,89 +264,60 @@
             await loadKeys();
         }
         
+        async function loadLogs() {
+            const data = await api('/logs?limit=50');
+            if (!data) return;
+            const tbody = document.getElementById('logs-table');
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#737373;">暂无日志</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.map(log => {
+                const time = new Date(log.created_at).toLocaleString('zh-CN', {hour12: false});
+                const statusBadge = log.success 
+                    ? (log.from_cache ? '<span class="badge badge-gray">缓存</span>' : '<span class="badge badge-green">成功</span>')
+                    : '<span class="badge badge-red">失败</span>';
+                return `
+                    <tr>
+                        <td style="white-space:nowrap;">${time}</td>
+                        <td>${log.request_id}</td>
+                        <td class="key-text" title="${log.url}">${log.url}</td>
+                        <td>${log.proxy || '-'}</td>
+                        <td>${statusBadge}</td>
+                        <td>${log.elapsed_seconds?.toFixed(2) || '-'}s</td>
+                        <td class="error-text" title="${log.error || ''}">${log.error || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        async function clearLogs() {
+            if (!confirm('确定清空所有日志？')) return;
+            await api('/logs', 'DELETE');
+            await loadLogs();
+            showMsg('日志已清空');
+        }
+        
         async function changePassword() {
             const pwd = document.getElementById('new-password').value;
             const cfm = document.getElementById('confirm-password').value;
-            if (pwd !== cfm) {
-                showMsg('两次密码不一致', true);
-                return;
-            }
-            if (!pwd) {
-                showMsg('请输入新密码', true);
-                return;
-            }
+            if (pwd !== cfm) { showMsg('两次密码不一致', true); return; }
+            if (!pwd) { showMsg('请输入新密码', true); return; }
             await api('/password', 'POST', { password: pwd });
             document.getElementById('new-password').value = '';
             document.getElementById('confirm-password').value = '';
             showMsg('密码已修改');
         }
         
-        // 初始化：验证token并加载数据
         (async function init() {
-            const res = await fetch('/api/config', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (!res.ok) {
-                localStorage.removeItem('admin_token');
-                window.location.href = '/login';
-                return;
-            }
+            const res = await fetch('/api/config', { headers: { 'Authorization': 'Bearer ' + token } });
+            if (!res.ok) { localStorage.removeItem('admin_token'); window.location.href = '/login'; return; }
             await loadConfig();
             await loadKeys();
-            await loadProxies();
+            await loadLogs();
+            // 每10秒刷新日志
+            setInterval(loadLogs, 10000);
         })();
-        
-        // 代理池管理
-        async function loadProxies() {
-            const data = await api('/proxies');
-            if (!data) return;
-            const tbody = document.getElementById('proxies-table');
-            if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#737373;">暂无代理</td></tr>';
-                return;
-            }
-            tbody.innerHTML = data.map(p => `
-                <tr>
-                    <td>${p.name || '-'}</td>
-                    <td class="key-text" title="${p.address}">${p.address}</td>
-                    <td><span style="color:#4ade80">${p.success_count}</span> / <span style="color:#f87171">${p.fail_count}</span></td>
-                    <td><span class="badge ${p.enabled ? 'badge-green' : 'badge-red'}">${p.enabled ? '启用' : '禁用'}</span></td>
-                    <td>
-                        <button class="btn btn-sm btn-primary" onclick="toggleProxy(${p.id}, ${!p.enabled})">${p.enabled ? '禁用' : '启用'}</button>
-                        <button class="btn btn-sm btn-danger" onclick="deleteProxy(${p.id})">删除</button>
-                    </td>
-                </tr>
-            `).join('');
-        }
-        
-        async function addProxy() {
-            const address = document.getElementById('new-proxy-address').value.trim();
-            const name = document.getElementById('new-proxy-name').value.trim();
-            if (!address) {
-                showMsg('请输入代理地址', true);
-                return;
-            }
-            try {
-                await api('/proxies', 'POST', { address, name });
-                document.getElementById('new-proxy-address').value = '';
-                document.getElementById('new-proxy-name').value = '';
-                await loadProxies();
-                showMsg('代理已添加');
-            } catch (e) {
-                showMsg('添加失败: ' + e.message, true);
-            }
-        }
-        
-        async function toggleProxy(id, enabled) {
-            await api('/proxies/' + id, 'PUT', { enabled });
-            await loadProxies();
-        }
-        
-        async function deleteProxy(id) {
-            if (!confirm('确定删除此代理？')) return;
-            await api('/proxies/' + id, 'DELETE');
-            await loadProxies();
-        }
     </script>
 </body>
 </html>
