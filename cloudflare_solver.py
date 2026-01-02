@@ -375,8 +375,11 @@ class CloudflareSolver:
         height = random.randint(800, 1080)
         options.set_argument(f"--window-size={width},{height}")
         
-        # 反检测设置（精简版，Windows 兼容）
+        # 反检测设置
         options.set_argument("--disable-blink-features=AutomationControlled")
+        options.set_argument("--no-sandbox")
+        options.set_argument("--disable-dev-shm-usage")
+        options.set_argument("--disable-gpu")
         options.set_argument("--disable-infobars")
         options.set_argument("--disable-extensions")
         options.set_argument("--lang=en-US,en")
