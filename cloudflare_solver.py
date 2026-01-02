@@ -126,7 +126,9 @@ class SolutionCache:
 class BrowserPool:
     """
     浏览器实例池
-    预热浏览器实例，减少冷启动时间
+    - 预启动浏览器实例
+    - 请求从池子取浏览器
+    - 用完关闭，异步补充新的
     """
     
     def __init__(self, pool_size: int = 2, headless: bool = True):
@@ -137,6 +139,8 @@ class BrowserPool:
         self._ua = UserAgent()
         self._stats = {"created": 0, "reused": 0, "failed": 0}
         self._instance_counter = 0
+        self._replenish_thread = None
+        self._shutdown = False
     
     def _create_page(self, proxy: Optional[str] = None):
         """创建浏览器页面"""
@@ -146,39 +150,30 @@ class BrowserPool:
         
         options = ChromiumOptions()
         
-        # Docker 环境下设置 Chrome 路径
         chrome_path = os.environ.get("CHROME_PATH")
         if chrome_path:
             options.set_browser_path(chrome_path)
         elif os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
             options.set_browser_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
         
-        # 为每个实例创建独立的用户数据目录，避免冲突
         self._instance_counter += 1
         user_data_dir = os.path.join(tempfile.gettempdir(), f"cf_pool_{os.getpid()}_{self._instance_counter}_{random.randint(10000,99999)}")
         options.set_user_data_path(user_data_dir)
-        
-        # 自动分配端口避免冲突
         options.auto_port()
         
-        # 设置代理
         if proxy:
             proxy_addr = proxy if proxy.startswith("http") else f"http://{proxy}"
             options.set_proxy(proxy_addr)
         
-        # 随机 User-Agent
         options.set_user_agent(self._ua.chrome)
         
-        # 无头模式 - 使用新版无头模式更难被检测
         if self._headless:
             options.set_argument("--headless=new")
         
-        # 窗口大小随机化
         width = random.randint(1200, 1920)
         height = random.randint(800, 1080)
         options.set_argument(f"--window-size={width},{height}")
         
-        # 反检测设置
         options.set_argument("--disable-blink-features=AutomationControlled")
         options.set_argument("--no-sandbox")
         options.set_argument("--disable-dev-shm-usage")
@@ -186,63 +181,72 @@ class BrowserPool:
         options.set_argument("--disable-infobars")
         options.set_argument("--disable-extensions")
         options.set_argument("--lang=en-US,en")
-        options.set_argument("--disable-web-security")
-        options.set_argument("--allow-running-insecure-content")
         
-        # 更多反检测
         options.set_pref("credentials_enable_service", False)
         options.set_pref("profile.password_manager_enabled", False)
-        options.set_pref("webrtc.ip_handling_policy", "disable_non_proxied_udp")
-        options.set_pref("webrtc.multiple_routes_enabled", False)
-        options.set_pref("webrtc.nonproxied_udp_enabled", False)
         
         return ChromiumPage(options)
     
-    def acquire(self, proxy: Optional[str] = None):
-        """获取浏览器实例"""
-        # 注意：由于代理是在创建时设置的，池化只对无代理请求有效
-        if proxy:
-            self._stats["created"] += 1
-            return self._create_page(proxy)
-        
+    def _replenish_one(self):
+        """补充一个浏览器到池子"""
+        if self._shutdown:
+            return
+        try:
+            page = self._create_page()
+            page.get("about:blank")
+            with self._lock:
+                if len(self._available) < self._pool_size and not self._shutdown:
+                    self._available.append(page)
+                    self._stats["created"] += 1
+                    print(f"  🔄 补充浏览器实例，可用: {len(self._available)}")
+                else:
+                    page.quit()
+        except Exception as e:
+            print(f"  ⚠️ 补充浏览器失败: {e}")
+            self._stats["failed"] += 1
+    
+    def _async_replenish(self):
+        """异步补充浏览器"""
+        thread = threading.Thread(target=self._replenish_one, daemon=True)
+        thread.start()
+    
+    def acquire(self) -> Optional[object]:
+        """从池子获取浏览器实例"""
         with self._lock:
             if self._available:
-                page = self._available.pop()
+                page = self._available.pop(0)  # FIFO
                 self._stats["reused"] += 1
-                print(f"  ♻️ 复用浏览器实例，剩余: {len(self._available)}")
+                remaining = len(self._available)
+                print(f"  ♻️ 从池子取出浏览器，剩余: {remaining}")
+                # 如果池子快空了，异步补充
+                if remaining < self._pool_size:
+                    self._async_replenish()
                 return page
         
-        print("  🆕 创建新浏览器实例...")
+        # 池子空了，同步创建一个
+        print("  🆕 池子空了，创建新浏览器...")
         self._stats["created"] += 1
-        return self._create_page()
+        try:
+            page = self._create_page()
+            # 异步补充池子
+            self._async_replenish()
+            return page
+        except Exception as e:
+            print(f"  ❌ 创建浏览器失败: {e}")
+            self._stats["failed"] += 1
+            return None
     
-    def release(self, page, proxy: Optional[str] = None):
-        """归还浏览器实例"""
-        # 有代理的实例不复用
-        if proxy:
-            try:
-                page.quit()
-            except:
-                pass
-            return
-        
-        with self._lock:
-            if len(self._available) < self._pool_size:
-                try:
-                    # 清理 cookies 和状态，但保持浏览器打开
-                    page.clear_cache()
-                    page.get("about:blank")
-                    self._available.append(page)
-                    print(f"  ♻️ 浏览器实例已归还，可用: {len(self._available)}")
-                    return
-                except Exception as e:
-                    print(f"  ⚠️ 归还实例失败: {e}")
-                    self._stats["failed"] += 1
-        
+    def discard(self, page):
+        """用完后丢弃浏览器（关闭并异步补充新的）"""
+        # 关闭浏览器
         try:
             page.quit()
+            print(f"  🔒 浏览器已关闭")
         except:
             pass
+        
+        # 异步补充新的
+        self._async_replenish()
     
     def warmup(self, count: int = None):
         """预热浏览器实例"""
@@ -252,21 +256,23 @@ class BrowserPool:
         for i in range(count):
             try:
                 page = self._create_page()
-                # 测试浏览器是否正常工作
                 page.get("about:blank")
                 with self._lock:
                     if len(self._available) < self._pool_size:
                         self._available.append(page)
+                        self._stats["created"] += 1
                         print(f"  ✓ 实例 {i+1}/{count} 就绪")
                     else:
                         page.quit()
             except Exception as e:
                 print(f"  ✗ 实例 {i+1}/{count} 失败: {e}")
+                self._stats["failed"] += 1
         
         print(f"🔥 预热完成，可用实例: {len(self._available)}")
     
     def shutdown(self):
         """关闭所有实例"""
+        self._shutdown = True
         with self._lock:
             for page in self._available:
                 try:
@@ -396,7 +402,7 @@ class CloudflareSolver:
     def solve(self, website_url: str, skip_cache: bool = False, max_retries: int = 0) -> CloudflareSolution:
         """
         解决 Cloudflare Turnstile challenge.
-        如果遇到人机验证，关闭浏览器重新打开一个新的。
+        从浏览器池获取浏览器，用完关闭，池子异步补充新的。
         """
         # 检查缓存
         if self.use_cache and not skip_cache:
@@ -414,30 +420,32 @@ class CloudflareSolver:
             
             try:
                 if attempt > 0:
-                    # 重试前等待一段时间
-                    wait_time = random.randint(3000, 5000)
+                    wait_time = random.randint(2000, 3000)
                     print(f"🔄 第 {attempt}/{max_retries} 次重试，等待 {wait_time/1000:.1f}s...")
                     self._random_delay(wait_time, wait_time + 1000)
+                
+                # 从浏览器池获取（如果启用）
+                pool = get_browser_pool() if self.use_pool else None
+                if pool:
+                    print(f"  📂 从浏览器池获取...")
+                    page = pool.acquire()
+                    if not page:
+                        print(f"  ⚠️ 获取浏览器失败，创建新的...")
+                        page = self._create_page()
                 else:
-                    print(f"🆕 第 1 次尝试...")
+                    print(f"  📂 创建新浏览器实例...")
+                    page = self._create_page()
                 
-                # 每次都创建新的浏览器实例
-                print(f"  📂 创建新浏览器实例...")
-                page = self._create_page()
-                print(f"  ✓ 浏览器已启动")
-                
+                print(f"  ✓ 浏览器已就绪")
                 print(f"  🌐 访问: {website_url}")
                 page.get(website_url)
                 
-                # 等待页面加载
                 print(f"  ⏳ 等待页面加载...")
                 self._random_delay(2000, 3000)
                 
-                # 获取页面信息
                 title = page.title if page.title else "无标题"
                 print(f"  📄 页面标题: {title}")
                 
-                # 检查是否需要人机验证
                 print(f"  🔍 检查 cf_clearance...")
                 cf_clearance = self._check_clearance(page)
                 
@@ -456,24 +464,26 @@ class CloudflareSolver:
                         get_cache().set(website_url, solution, self.proxy)
                     
                     print(f"✅ 成功获取 cf_clearance!")
-                    print(f"  📝 cf_clearance: {cf_clearance[:50]}...")
                     return solution
                 else:
-                    # 遇到人机验证，关闭浏览器重试
-                    print(f"  ❌ 未获取到 cf_clearance，准备重试...")
+                    print(f"  ❌ 未获取到 cf_clearance")
                     raise CloudflareError("需要人机验证或超时")
                 
             except Exception as e:
                 last_error = e
                 print(f"  ❌ 本次尝试失败: {e}")
             finally:
-                # 每次都关闭浏览器
+                # 用完关闭浏览器，池子会异步补充新的
                 if page:
-                    try:
-                        page.quit()
-                        print(f"  🔒 浏览器已关闭")
-                    except:
-                        pass
+                    pool = get_browser_pool() if self.use_pool else None
+                    if pool:
+                        pool.discard(page)
+                    else:
+                        try:
+                            page.quit()
+                            print(f"  🔒 浏览器已关闭")
+                        except:
+                            pass
                     page = None
         
         print(f"❌ 所有 {max_retries + 1} 次尝试均失败")
