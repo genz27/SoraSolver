@@ -53,6 +53,19 @@ def init_db():
         )
     """)
     
+    # 代理池表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proxies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            address TEXT UNIQUE NOT NULL,
+            name TEXT,
+            enabled INTEGER DEFAULT 1,
+            success_count INTEGER DEFAULT 0,
+            fail_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     # 初始化默认配置
     defaults = {
         "max_workers": ("3", "并发浏览器数量"),
@@ -60,6 +73,7 @@ def init_db():
         "semaphore_limit": ("3", "并发请求限制"),
         "cache_ttl": ("1800", "缓存过期时间(秒)"),
         "require_api_key": ("0", "是否需要API Key验证(0/1)"),
+        "proxy_pool_enabled": ("0", "是否启用代理池(0/1)"),
     }
     
     for key, (value, desc) in defaults.items():
@@ -235,7 +249,92 @@ class AdminManager:
         return affected > 0
 
 
+class ProxyPoolManager:
+    """代理池管理器"""
+    
+    _current_index = 0
+    _lock = threading.Lock()
+    
+    def list_proxies(self) -> list:
+        """列出所有代理"""
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, address, name, enabled, success_count, fail_count, created_at FROM proxies ORDER BY id")
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    
+    def get_enabled_proxies(self) -> list:
+        """获取所有启用的代理"""
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT address FROM proxies WHERE enabled = 1 ORDER BY id")
+        rows = cursor.fetchall()
+        conn.close()
+        return [row["address"] for row in rows]
+    
+    def get_next_proxy(self) -> Optional[str]:
+        """轮询获取下一个代理"""
+        proxies = self.get_enabled_proxies()
+        if not proxies:
+            return None
+        
+        with self._lock:
+            proxy = proxies[self._current_index % len(proxies)]
+            self._current_index += 1
+        return proxy
+    
+    def add_proxy(self, address: str, name: str = None) -> bool:
+        """添加代理"""
+        conn = get_db()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO proxies (address, name) VALUES (?, ?)",
+                (address, name or "")
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+    
+    def delete_proxy(self, proxy_id: int):
+        """删除代理"""
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM proxies WHERE id = ?", (proxy_id,))
+        conn.commit()
+        conn.close()
+    
+    def toggle_proxy(self, proxy_id: int, enabled: bool):
+        """启用/禁用代理"""
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE proxies SET enabled = ? WHERE id = ?", (1 if enabled else 0, proxy_id))
+        conn.commit()
+        conn.close()
+    
+    def record_success(self, address: str):
+        """记录成功"""
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE proxies SET success_count = success_count + 1 WHERE address = ?", (address,))
+        conn.commit()
+        conn.close()
+    
+    def record_fail(self, address: str):
+        """记录失败"""
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE proxies SET fail_count = fail_count + 1 WHERE address = ?", (address,))
+        conn.commit()
+        conn.close()
+
+
 # 全局实例
 config = ConfigManager()
 api_keys = APIKeyManager()
 admins = AdminManager()
+proxy_pool = ProxyPoolManager()

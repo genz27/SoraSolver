@@ -393,7 +393,7 @@ class CloudflareSolver:
         
         return ChromiumPage(options)
     
-    def solve(self, website_url: str, skip_cache: bool = False, max_retries: int = 5) -> CloudflareSolution:
+    def solve(self, website_url: str, skip_cache: bool = False, max_retries: int = 0) -> CloudflareSolution:
         """
         解决 Cloudflare Turnstile challenge.
         如果遇到人机验证，关闭浏览器重新打开一个新的。
@@ -407,7 +407,7 @@ class CloudflareSolver:
                 return cached
         
         last_error = None
-        print(f"🚀 开始获取 cf_clearance, URL: {website_url}, 最大重试: {max_retries}")
+        print(f"🚀 开始获取 cf_clearance, URL: {website_url}")
         
         for attempt in range(max_retries + 1):
             page = None

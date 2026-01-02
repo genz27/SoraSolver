@@ -83,6 +83,21 @@
             </div>
             <button class="btn btn-primary" onclick="changePassword()">修改密码</button>
         </div>
+        
+        <div class="card">
+            <div class="card-title">代理池管理</div>
+            <div class="form-row" style="margin-bottom:20px;">
+                <input type="text" id="new-proxy-address" placeholder="代理地址 (如: 127.0.0.1:7890)" style="flex:2;">
+                <input type="text" id="new-proxy-name" placeholder="名称（可选）" style="flex:1;">
+                <button class="btn btn-primary" onclick="addProxy()">添加代理</button>
+            </div>
+            <table>
+                <thead>
+                    <tr><th>名称</th><th>地址</th><th>成功/失败</th><th>状态</th><th>操作</th></tr>
+                </thead>
+                <tbody id="proxies-table"></tbody>
+            </table>
+        </div>
     </div>
     
     <script>
@@ -133,12 +148,13 @@
                 'pool_size': '浏览器池大小',
                 'semaphore_limit': '并发请求限制',
                 'cache_ttl': '缓存过期时间(秒)',
-                'require_api_key': '启用API Key验证'
+                'require_api_key': '启用API Key验证',
+                'proxy_pool_enabled': '启用代理池轮询'
             };
             
             for (const [key, info] of Object.entries(data)) {
                 const label = labels[key] || key;
-                if (key === 'require_api_key') {
+                if (key === 'require_api_key' || key === 'proxy_pool_enabled') {
                     // 开关样式
                     const checked = info.value === '1' ? 'checked' : '';
                     form.innerHTML += `
@@ -240,7 +256,60 @@
             }
             await loadConfig();
             await loadKeys();
+            await loadProxies();
         })();
+        
+        // 代理池管理
+        async function loadProxies() {
+            const data = await api('/proxies');
+            if (!data) return;
+            const tbody = document.getElementById('proxies-table');
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#737373;">暂无代理</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.map(p => `
+                <tr>
+                    <td>${p.name || '-'}</td>
+                    <td class="key-text" title="${p.address}">${p.address}</td>
+                    <td><span style="color:#4ade80">${p.success_count}</span> / <span style="color:#f87171">${p.fail_count}</span></td>
+                    <td><span class="badge ${p.enabled ? 'badge-green' : 'badge-red'}">${p.enabled ? '启用' : '禁用'}</span></td>
+                    <td>
+                        <button class="btn btn-sm btn-primary" onclick="toggleProxy(${p.id}, ${!p.enabled})">${p.enabled ? '禁用' : '启用'}</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteProxy(${p.id})">删除</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        async function addProxy() {
+            const address = document.getElementById('new-proxy-address').value.trim();
+            const name = document.getElementById('new-proxy-name').value.trim();
+            if (!address) {
+                showMsg('请输入代理地址', true);
+                return;
+            }
+            try {
+                await api('/proxies', 'POST', { address, name });
+                document.getElementById('new-proxy-address').value = '';
+                document.getElementById('new-proxy-name').value = '';
+                await loadProxies();
+                showMsg('代理已添加');
+            } catch (e) {
+                showMsg('添加失败: ' + e.message, true);
+            }
+        }
+        
+        async function toggleProxy(id, enabled) {
+            await api('/proxies/' + id, 'PUT', { enabled });
+            await loadProxies();
+        }
+        
+        async function deleteProxy(id) {
+            if (!confirm('确定删除此代理？')) return;
+            await api('/proxies/' + id, 'DELETE');
+            await loadProxies();
+        }
     </script>
 </body>
 </html>
