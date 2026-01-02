@@ -473,7 +473,13 @@ class CloudflareSolver:
                 
                 print(f"  ✓ 浏览器已就绪")
                 print(f"  🌐 访问: {website_url}")
-                page.get(website_url)
+                
+                # 设置页面加载超时
+                try:
+                    page.set.load_mode.eager()  # 不等待所有资源加载完成
+                    page.get(website_url, timeout=30)
+                except Exception as e:
+                    print(f"  ⚠️ 页面加载异常: {e}")
                 
                 print(f"  ⏳ 等待页面加载...")
                 self._random_delay(2000, 3000)
