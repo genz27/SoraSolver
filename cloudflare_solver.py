@@ -127,8 +127,9 @@ class BrowserPool:
     """
     浏览器实例池
     - 预启动浏览器实例
-    - 请求从池子取浏览器
+    - 请求从池子取浏览器，池子空了就等待
     - 用完关闭，异步补充新的
+    - 限制最大并发数
     """
     
     def __init__(self, pool_size: int = 2, headless: bool = True):
@@ -136,11 +137,12 @@ class BrowserPool:
         self._headless = headless
         self._available: List = []
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
         self._ua = UserAgent()
-        self._stats = {"created": 0, "reused": 0, "failed": 0}
+        self._stats = {"created": 0, "reused": 0, "failed": 0, "waiting": 0}
         self._instance_counter = 0
-        self._replenish_thread = None
         self._shutdown = False
+        self._creating = 0  # 正在创建的数量
     
     def _create_page(self, proxy: Optional[str] = None):
         """创建浏览器页面"""
@@ -194,41 +196,75 @@ class BrowserPool:
         try:
             page = self._create_page()
             page.get("about:blank")
-            with self._lock:
+            with self._condition:
+                self._creating -= 1
                 if len(self._available) < self._pool_size and not self._shutdown:
                     self._available.append(page)
                     self._stats["created"] += 1
-                    print(f"  🔄 补充浏览器实例，可用: {len(self._available)}")
+                    print(f"  🔄 补充浏览器，可用: {len(self._available)}")
+                    self._condition.notify()  # 通知等待的请求
                 else:
                     page.quit()
         except Exception as e:
+            with self._condition:
+                self._creating -= 1
             print(f"  ⚠️ 补充浏览器失败: {e}")
             self._stats["failed"] += 1
     
     def _async_replenish(self):
         """异步补充浏览器"""
+        with self._lock:
+            # 检查是否需要补充
+            total = len(self._available) + self._creating
+            if total >= self._pool_size:
+                return
+            self._creating += 1
+        
         thread = threading.Thread(target=self._replenish_one, daemon=True)
         thread.start()
     
-    def acquire(self) -> Optional[object]:
-        """从池子获取浏览器实例"""
-        with self._lock:
+    def acquire(self, timeout: float = 30) -> Optional[object]:
+        """从池子获取浏览器实例，池子空了就等待"""
+        with self._condition:
+            # 先尝试从池子获取
             if self._available:
-                page = self._available.pop(0)  # FIFO
+                page = self._available.pop(0)
                 self._stats["reused"] += 1
                 remaining = len(self._available)
                 print(f"  ♻️ 从池子取出浏览器，剩余: {remaining}")
-                # 如果池子快空了，异步补充
-                if remaining < self._pool_size:
-                    self._async_replenish()
+                # 异步补充
+                self._async_replenish()
+                return page
+            
+            # 池子空了，触发补充并等待
+            self._stats["waiting"] += 1
+            print(f"  ⏳ 池子空了，等待浏览器... (等待中: {self._stats['waiting']})")
+            self._async_replenish()
+            
+            # 等待有可用的浏览器
+            start_time = time.time()
+            while not self._available and not self._shutdown:
+                remaining_time = timeout - (time.time() - start_time)
+                if remaining_time <= 0:
+                    self._stats["waiting"] -= 1
+                    print(f"  ⏰ 等待超时，创建新浏览器...")
+                    break
+                self._condition.wait(timeout=min(remaining_time, 1.0))
+            
+            self._stats["waiting"] -= 1
+            
+            if self._available:
+                page = self._available.pop(0)
+                self._stats["reused"] += 1
+                print(f"  ♻️ 等待后获取到浏览器，剩余: {len(self._available)}")
+                self._async_replenish()
                 return page
         
-        # 池子空了，同步创建一个
-        print("  🆕 池子空了，创建新浏览器...")
+        # 超时了还没有，同步创建一个
+        print("  🆕 超时，同步创建新浏览器...")
         self._stats["created"] += 1
         try:
             page = self._create_page()
-            # 异步补充池子
             self._async_replenish()
             return page
         except Exception as e:
@@ -238,14 +274,11 @@ class BrowserPool:
     
     def discard(self, page):
         """用完后丢弃浏览器（关闭并异步补充新的）"""
-        # 关闭浏览器
         try:
             page.quit()
             print(f"  🔒 浏览器已关闭")
         except:
             pass
-        
-        # 异步补充新的
         self._async_replenish()
     
     def warmup(self, count: int = None):
@@ -272,8 +305,9 @@ class BrowserPool:
     
     def shutdown(self):
         """关闭所有实例"""
-        self._shutdown = True
-        with self._lock:
+        with self._condition:
+            self._shutdown = True
+            self._condition.notify_all()
             for page in self._available:
                 try:
                     page.quit()
@@ -287,6 +321,7 @@ class BrowserPool:
             return {
                 "available": len(self._available),
                 "pool_size": self._pool_size,
+                "creating": self._creating,
                 **self._stats
             }
 
