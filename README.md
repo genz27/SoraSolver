@@ -92,7 +92,6 @@ curl -H "X-API-Key: your-key" "http://localhost:8005/v1/challenge"
 | 配置项 | 说明 | 默认值 | 环境变量 |
 |--------|------|--------|----------|
 | max_workers | 并发浏览器数，同时运行的浏览器实例数量 | 3 | MAX_WORKERS |
-| pool_size | 预热浏览器数，启动时预先创建的浏览器数量 | 2 | POOL_SIZE |
 | semaphore_limit | 并发请求限制，同时处理的请求数量 | 3 | SEMAPHORE_LIMIT |
 | cache_ttl | 缓存过期时间(秒)，cf_clearance 的缓存有效期 | 1800 | CACHE_TTL |
 | require_api_key | 是否启用 API Key 验证，`1` 启用 `0` 禁用 | 0 | - |
@@ -103,7 +102,6 @@ curl -H "X-API-Key: your-key" "http://localhost:8005/v1/challenge"
 # docker-compose.yml 示例
 environment:
   - MAX_WORKERS=5
-  - POOL_SIZE=3
   - SEMAPHORE_LIMIT=5
   - CACHE_TTL=3600
 ```
@@ -127,8 +125,8 @@ volumes:
 
 ## 工作原理
 
-1. 使用无头 Chrome 浏览器访问目标页面
+1. 每次请求时启动无头 Chrome 浏览器访问目标页面
 2. 等待 Cloudflare 验证自动通过
 3. 如果遇到人机验证（需要点击），自动关闭浏览器并重新打开重试
 4. 最多重试 5 次
-5. 成功后返回 cf_clearance cookie
+5. 成功后返回 cf_clearance cookie，关闭浏览器

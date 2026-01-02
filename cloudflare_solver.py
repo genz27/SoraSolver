@@ -2,14 +2,14 @@
 Cloudflare Turnstile Challenge Solver using DrissionPage
 
 独立项目，用于解决 Cloudflare 验证并获取 cf_clearance cookie
-支持浏览器实例池和结果缓存
+支持结果缓存
 """
 import time
 import json
 import random
 import argparse
 import threading
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 from dataclasses import dataclass, field
 from datetime import datetime
 from collections import OrderedDict
@@ -123,28 +123,43 @@ class SolutionCache:
             }
 
 
-class BrowserPool:
+# 全局实例
+_solution_cache: Optional[SolutionCache] = None
+
+
+def get_cache() -> SolutionCache:
+    """获取全局缓存实例"""
+    global _solution_cache
+    if _solution_cache is None:
+        _solution_cache = SolutionCache()
+    return _solution_cache
+
+
+class CloudflareSolver:
     """
-    浏览器实例池
-    - 预启动浏览器实例
-    - 请求从池子取浏览器，池子空了就等待
-    - 用完关闭，异步补充新的
-    - 限制最大并发数
+    Cloudflare Turnstile Challenge solver using DrissionPage.
+    使用真实浏览器绕过 Cloudflare 检测。
     """
     
-    def __init__(self, pool_size: int = 2, headless: bool = True):
-        self._pool_size = pool_size
-        self._headless = headless
-        self._available: List = []
-        self._lock = threading.Lock()
-        self._condition = threading.Condition(self._lock)
-        self._ua = UserAgent()
-        self._stats = {"created": 0, "reused": 0, "failed": 0, "waiting": 0}
+    def __init__(
+        self,
+        proxy: Optional[str] = None,
+        headless: bool = False,
+        timeout: int = 60,
+        use_cache: bool = True
+    ):
+        self.proxy = proxy
+        self.headless = headless
+        self.timeout = timeout
+        self.use_cache = use_cache
+        self.ua = UserAgent()
         self._instance_counter = 0
-        self._shutdown = False
-        self._creating = 0  # 正在创建的数量
     
-    def _create_page(self, proxy: Optional[str] = None):
+    def _random_delay(self, min_ms: int = 100, max_ms: int = 500):
+        """随机延迟"""
+        time.sleep(random.randint(min_ms, max_ms) / 1000)
+    
+    def _create_page(self):
         """创建浏览器页面"""
         import os
         import tempfile
@@ -158,279 +173,27 @@ class BrowserPool:
         elif os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
             options.set_browser_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
         
-        self._instance_counter += 1
-        user_data_dir = os.path.join(tempfile.gettempdir(), f"cf_pool_{os.getpid()}_{self._instance_counter}_{random.randint(10000,99999)}")
-        options.set_user_data_path(user_data_dir)
-        options.auto_port()
-        
-        if proxy:
-            proxy_addr = proxy if proxy.startswith("http") else f"http://{proxy}"
-            options.set_proxy(proxy_addr)
-        
-        options.set_user_agent(self._ua.chrome)
-        
-        if self._headless:
-            options.set_argument("--headless=new")
-        
-        width = random.randint(1200, 1920)
-        height = random.randint(800, 1080)
-        options.set_argument(f"--window-size={width},{height}")
-        
-        options.set_argument("--disable-blink-features=AutomationControlled")
-        options.set_argument("--no-sandbox")
-        options.set_argument("--disable-dev-shm-usage")
-        options.set_argument("--disable-gpu")
-        options.set_argument("--disable-infobars")
-        options.set_argument("--disable-extensions")
-        options.set_argument("--lang=en-US,en")
-        
-        options.set_pref("credentials_enable_service", False)
-        options.set_pref("profile.password_manager_enabled", False)
-        
-        return ChromiumPage(options)
-    
-    def _replenish_one(self):
-        """补充一个浏览器到池子"""
-        if self._shutdown:
-            return
-        try:
-            page = self._create_page()
-            page.get("about:blank")
-            with self._condition:
-                self._creating -= 1
-                if len(self._available) < self._pool_size and not self._shutdown:
-                    self._available.append(page)
-                    self._stats["created"] += 1
-                    print(f"  🔄 补充浏览器，可用: {len(self._available)}")
-                    self._condition.notify()  # 通知等待的请求
-                else:
-                    page.quit()
-        except Exception as e:
-            with self._condition:
-                self._creating -= 1
-            print(f"  ⚠️ 补充浏览器失败: {e}")
-            self._stats["failed"] += 1
-    
-    def _async_replenish(self):
-        """异步补充浏览器"""
-        with self._lock:
-            # 检查是否需要补充
-            total = len(self._available) + self._creating
-            if total >= self._pool_size:
-                return
-            self._creating += 1
-        
-        thread = threading.Thread(target=self._replenish_one, daemon=True)
-        thread.start()
-    
-    def acquire(self, timeout: float = 30) -> Optional[object]:
-        """从池子获取浏览器实例，池子空了就等待"""
-        with self._condition:
-            # 先尝试从池子获取
-            if self._available:
-                page = self._available.pop(0)
-                self._stats["reused"] += 1
-                remaining = len(self._available)
-                print(f"    ♻️ 从池子取出浏览器，剩余: {remaining}")
-                # 异步补充
-                self._async_replenish()
-                return page
-            
-            # 池子空了，触发补充并等待
-            self._stats["waiting"] += 1
-            print(f"    ⏳ 池子空了，等待浏览器... (等待中: {self._stats['waiting']})")
-            self._async_replenish()
-            
-            # 等待有可用的浏览器
-            start_time = time.time()
-            while not self._available and not self._shutdown:
-                remaining_time = timeout - (time.time() - start_time)
-                if remaining_time <= 0:
-                    self._stats["waiting"] -= 1
-                    print(f"    ⏰ 等待超时 ({timeout}s)，创建新浏览器...")
-                    break
-                self._condition.wait(timeout=min(remaining_time, 1.0))
-            
-            self._stats["waiting"] -= 1
-            
-            if self._available:
-                page = self._available.pop(0)
-                self._stats["reused"] += 1
-                print(f"    ♻️ 等待后获取到浏览器，剩余: {len(self._available)}")
-                self._async_replenish()
-                return page
-        
-        # 超时了还没有，同步创建一个
-        print("    🆕 超时，同步创建新浏览器...")
-        self._stats["created"] += 1
-        try:
-            page = self._create_page()
-            self._async_replenish()
-            return page
-        except Exception as e:
-            print(f"    ❌ 创建浏览器失败: {e}")
-            self._stats["failed"] += 1
-            return None
-    
-    def discard(self, page):
-        """用完后丢弃浏览器（关闭并异步补充新的）"""
-        try:
-            page.quit()
-            print(f"  🔒 浏览器已关闭")
-        except:
-            pass
-        self._async_replenish()
-    
-    def warmup(self, count: int = None):
-        """预热浏览器实例"""
-        count = count or self._pool_size
-        print(f"🔥 预热 {count} 个浏览器实例...")
-        
-        for i in range(count):
-            try:
-                page = self._create_page()
-                page.get("about:blank")
-                with self._lock:
-                    if len(self._available) < self._pool_size:
-                        self._available.append(page)
-                        self._stats["created"] += 1
-                        print(f"  ✓ 实例 {i+1}/{count} 就绪")
-                    else:
-                        page.quit()
-            except Exception as e:
-                print(f"  ✗ 实例 {i+1}/{count} 失败: {e}")
-                self._stats["failed"] += 1
-        
-        print(f"🔥 预热完成，可用实例: {len(self._available)}")
-    
-    def shutdown(self):
-        """关闭所有实例"""
-        with self._condition:
-            self._shutdown = True
-            self._condition.notify_all()
-            for page in self._available:
-                try:
-                    page.quit()
-                except:
-                    pass
-            self._available.clear()
-    
-    def stats(self) -> dict:
-        """获取池统计"""
-        with self._lock:
-            return {
-                "available": len(self._available),
-                "pool_size": self._pool_size,
-                "creating": self._creating,
-                **self._stats
-            }
-
-
-# 全局实例
-_solution_cache: Optional[SolutionCache] = None
-_browser_pool: Optional[BrowserPool] = None
-
-
-def get_cache() -> SolutionCache:
-    """获取全局缓存实例"""
-    global _solution_cache
-    if _solution_cache is None:
-        _solution_cache = SolutionCache()
-    return _solution_cache
-
-
-def get_browser_pool() -> Optional[BrowserPool]:
-    """获取全局浏览器池"""
-    return _browser_pool
-
-
-def init_browser_pool(pool_size: int = 2, headless: bool = True, warmup: bool = True):
-    """初始化浏览器池"""
-    global _browser_pool
-    _browser_pool = BrowserPool(pool_size=pool_size, headless=headless)
-    if warmup:
-        _browser_pool.warmup()
-    return _browser_pool
-
-
-class CloudflareSolver:
-    """
-    Cloudflare Turnstile Challenge solver using DrissionPage.
-    使用真实浏览器绕过 Cloudflare 检测。
-    """
-    
-    def __init__(
-        self,
-        proxy: Optional[str] = None,
-        headless: bool = True,
-        timeout: int = 60,
-        use_cache: bool = True,
-        use_pool: bool = True
-    ):
-        self.proxy = proxy
-        self.headless = headless
-        self.timeout = timeout
-        self.use_cache = use_cache
-        self.use_pool = use_pool
-        self.ua = UserAgent()
-        self._instance_counter = 0
-    
-    def _random_delay(self, min_ms: int = 100, max_ms: int = 500):
-        """随机延迟"""
-        time.sleep(random.randint(min_ms, max_ms) / 1000)
-    
-    def _create_page(self):
-        """创建浏览器页面（不使用池时）"""
-        import os
-        import tempfile
-        from DrissionPage import ChromiumPage, ChromiumOptions
-        
-        options = ChromiumOptions()
-        
-        chrome_path = os.environ.get("CHROME_PATH")
-        if chrome_path:
-            options.set_browser_path(chrome_path)
-        elif os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
-            options.set_browser_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
-        
-        # 为每个实例创建独立的用户数据目录，避免冲突
-        self._instance_counter += 1
-        user_data_dir = os.path.join(tempfile.gettempdir(), f"cf_solver_{os.getpid()}_{self._instance_counter}_{random.randint(10000,99999)}")
-        options.set_user_data_path(user_data_dir)
-        
-        # 自动分配端口避免冲突
         options.auto_port()
         
         if self.proxy:
             proxy_addr = self.proxy if self.proxy.startswith("http") else f"http://{self.proxy}"
             options.set_proxy(proxy_addr)
         
-        options.set_user_agent(self.ua.chrome)
-        
         if self.headless:
             options.set_argument("--headless=new")
         
-        width = random.randint(1200, 1920)
-        height = random.randint(800, 1080)
-        options.set_argument(f"--window-size={width},{height}")
-        
-        # 反检测设置
+        options.set_argument("--window-size=1920,1080")
         options.set_argument("--disable-blink-features=AutomationControlled")
-        options.set_argument("--no-sandbox")
-        options.set_argument("--disable-dev-shm-usage")
-        options.set_argument("--disable-gpu")
-        options.set_argument("--disable-infobars")
-        options.set_argument("--disable-extensions")
-        options.set_argument("--lang=en-US,en")
-        options.set_argument("--disable-web-security")
-        options.set_argument("--allow-running-insecure-content")
         
-        # 更多反检测
-        options.set_pref("credentials_enable_service", False)
-        options.set_pref("profile.password_manager_enabled", False)
-        options.set_pref("webrtc.ip_handling_policy", "disable_non_proxied_udp")
-        options.set_pref("webrtc.multiple_routes_enabled", False)
-        options.set_pref("webrtc.nonproxied_udp_enabled", False)
+        # Docker 环境需要这些参数
+        if os.path.exists("/.dockerenv") or os.environ.get("DOCKER_ENV"):
+            options.set_argument("--no-sandbox")
+            options.set_argument("--disable-dev-shm-usage")
+            options.set_argument("--disable-gpu")
+            # Docker 里需要独立用户目录
+            self._instance_counter += 1
+            user_data_dir = os.path.join(tempfile.gettempdir(), f"cf_solver_{self._instance_counter}_{random.randint(10000,99999)}")
+            options.set_user_data_path(user_data_dir)
         
         return ChromiumPage(options)
     
@@ -459,30 +222,21 @@ class CloudflareSolver:
                     print(f"🔄 第 {attempt}/{max_retries} 次重试，等待 {wait_time/1000:.1f}s...")
                     self._random_delay(wait_time, wait_time + 1000)
                 
-                # 从浏览器池获取（如果启用）
-                pool = get_browser_pool() if self.use_pool else None
-                if pool:
-                    print(f"  📂 从浏览器池获取...")
-                    page = pool.acquire()
-                    if not page:
-                        print(f"  ⚠️ 获取浏览器失败，创建新的...")
-                        page = self._create_page()
-                else:
-                    print(f"  📂 创建新浏览器实例...")
-                    page = self._create_page()
+                # 每次创建新的浏览器
+                print(f"  📂 创建浏览器...")
+                page = self._create_page()
                 
                 print(f"  ✓ 浏览器已就绪")
                 print(f"  🌐 访问: {website_url}")
                 
-                # 设置页面加载超时
+                # 设置页面加载
                 try:
-                    page.set.load_mode.eager()  # 不等待所有资源加载完成
                     page.get(website_url, timeout=30)
                 except Exception as e:
                     print(f"  ⚠️ 页面加载异常: {e}")
                 
                 print(f"  ⏳ 等待页面加载...")
-                self._random_delay(2000, 3000)
+                self._random_delay(3000, 5000)
                 
                 title = page.title if page.title else "无标题"
                 print(f"  📄 页面标题: {title}")
@@ -514,17 +268,13 @@ class CloudflareSolver:
                 last_error = e
                 print(f"  ❌ 本次尝试失败: {e}")
             finally:
-                # 用完关闭浏览器，池子会异步补充新的
+                # 关闭浏览器
                 if page:
-                    pool = get_browser_pool() if self.use_pool else None
-                    if pool:
-                        pool.discard(page)
-                    else:
-                        try:
-                            page.quit()
-                            print(f"  🔒 浏览器已关闭")
-                        except:
-                            pass
+                    try:
+                        page.quit()
+                        print(f"  🔒 浏览器已关闭")
+                    except:
+                        pass
                     page = None
         
         print(f"❌ 所有 {max_retries + 1} 次尝试均失败")
@@ -642,14 +392,14 @@ def main():
     parser = argparse.ArgumentParser(description="Cloudflare Turnstile Challenge Solver")
     parser.add_argument("url", nargs="?", default="https://sora.chatgpt.com", help="目标 URL")
     parser.add_argument("-p", "--proxy", help="代理地址 (ip:port)")
-    parser.add_argument("--headless", action="store_true", default=True, help="无头模式（默认）")
+    parser.add_argument("--headless", action="store_true", default=False, help="无头模式")
     parser.add_argument("--no-headless", action="store_true", help="显示浏览器窗口（默认）")
     parser.add_argument("-t", "--timeout", type=int, default=60, help="超时时间（秒）")
     parser.add_argument("-o", "--output", help="输出 JSON 文件路径")
     parser.add_argument("--no-cache", action="store_true", help="禁用缓存")
     
     args = parser.parse_args()
-    headless = not args.no_headless
+    headless = args.headless  # 默认 False（有头模式）
     
     print("=" * 50)
     print("Cloudflare Turnstile Challenge Solver")
@@ -665,8 +415,7 @@ def main():
         proxy=args.proxy,
         headless=headless,
         timeout=args.timeout,
-        use_cache=not args.no_cache,
-        use_pool=False  # CLI 模式不使用池
+        use_cache=not args.no_cache
     )
     
     try:

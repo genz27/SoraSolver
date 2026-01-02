@@ -20,8 +20,7 @@ from pydantic import BaseModel
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 from cloudflare_solver import (
-    CloudflareSolver, CloudflareError,
-    init_browser_pool, get_browser_pool, get_cache
+    CloudflareSolver, CloudflareError, get_cache
 )
 from config import init_db, config, api_keys, admins, proxy_pool, request_logger, ConfigManager
 
@@ -69,18 +68,12 @@ async def lifespan(app: FastAPI):
     
     # 从配置加载参数
     max_workers = get_config_int("max_workers", 3)
-    pool_size = get_config_int("pool_size", 2)
     semaphore_limit = get_config_int("semaphore_limit", 3)
     
-    print(f"   MAX_WORKERS={max_workers}, POOL_SIZE={pool_size}, SEMAPHORE={semaphore_limit}")
+    print(f"   MAX_WORKERS={max_workers}, SEMAPHORE={semaphore_limit}")
     
     request_semaphore = asyncio.Semaphore(semaphore_limit)
     executor = ThreadPoolExecutor(max_workers=max_workers)
-    
-    try:
-        init_browser_pool(pool_size=pool_size, headless=True, warmup=True)
-    except Exception as e:
-        print(f"⚠️ 浏览器池初始化失败: {e}")
     
     print("✅ 服务就绪")
     
@@ -89,9 +82,6 @@ async def lifespan(app: FastAPI):
     print("🛑 关闭服务...")
     if executor:
         executor.shutdown(wait=False)
-    pool = get_browser_pool()
-    if pool:
-        pool.shutdown()
 
 
 app = FastAPI(
@@ -156,7 +146,7 @@ async def solve_challenge(
     url: str = Query(default="https://sora.chatgpt.com"),
     proxy: Optional[str] = Query(default=None),
     timeout: int = Query(default=60, ge=10, le=300),
-    headless: bool = Query(default=True),
+    headless: bool = Query(default=False),
     skip_cache: bool = Query(default=False)
 ):
     """解决 Cloudflare Challenge"""
@@ -202,8 +192,7 @@ async def solve_challenge(
                 proxy=use_proxy,
                 headless=headless,
                 timeout=timeout,
-                use_cache=True,
-                use_pool=True
+                use_cache=True
             )
             
             try:
@@ -254,7 +243,6 @@ async def solve_challenge(
 async def get_stats():
     """获取统计信息"""
     cache = get_cache()
-    pool = get_browser_pool()
     total = stats["total_requests"]
     
     return {
@@ -267,8 +255,7 @@ async def get_stats():
         "uptime_seconds": round(time.time() - stats["start_time"], 0) if stats["start_time"] else 0,
         "queue_waiting": stats["queue_waiting"],
         "processing": stats["processing"],
-        "cache_stats": cache.stats(),
-        "pool_stats": pool.stats() if pool else None
+        "cache_stats": cache.stats()
     }
 
 
@@ -290,11 +277,9 @@ async def get_queue_status():
 @app.get("/health")
 async def health_check():
     """健康检查"""
-    pool = get_browser_pool()
     return {
         "status": "ok",
-        "version": "2.1.0",
-        "pool_available": pool.stats()["available"] if pool else 0
+        "version": "2.1.0"
     }
 
 
@@ -361,7 +346,6 @@ async def delete_api_key(key_id: int):
 async def get_admin_stats():
     """管理后台统计"""
     cache = get_cache()
-    pool = get_browser_pool()
     total = stats["total_requests"]
     
     return {
@@ -372,8 +356,7 @@ async def get_admin_stats():
         "cache_hits": stats["cache_hits"],
         "avg_time": round(stats["avg_time"], 2),
         "uptime_seconds": round(time.time() - stats["start_time"], 0) if stats["start_time"] else 0,
-        "cache_stats": cache.stats(),
-        "pool_stats": pool.stats() if pool else None
+        "cache_stats": cache.stats()
     }
 
 
