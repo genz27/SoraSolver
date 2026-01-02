@@ -144,7 +144,7 @@ class CloudflareSolver:
     def __init__(
         self,
         proxy: Optional[str] = None,
-        headless: bool = False,
+        headless: bool = True,
         timeout: int = 60,
         use_cache: bool = True
     ):
