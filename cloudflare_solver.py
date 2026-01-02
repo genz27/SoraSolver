@@ -136,10 +136,12 @@ class BrowserPool:
         self._lock = threading.Lock()
         self._ua = UserAgent()
         self._stats = {"created": 0, "reused": 0, "failed": 0}
+        self._instance_counter = 0
     
     def _create_page(self, proxy: Optional[str] = None):
         """创建浏览器页面"""
         import os
+        import tempfile
         from DrissionPage import ChromiumPage, ChromiumOptions
         
         options = ChromiumOptions()
@@ -148,6 +150,16 @@ class BrowserPool:
         chrome_path = os.environ.get("CHROME_PATH")
         if chrome_path:
             options.set_browser_path(chrome_path)
+        elif os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
+            options.set_browser_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        
+        # 为每个实例创建独立的用户数据目录，避免冲突
+        self._instance_counter += 1
+        user_data_dir = os.path.join(tempfile.gettempdir(), f"cf_pool_{os.getpid()}_{self._instance_counter}_{random.randint(10000,99999)}")
+        options.set_user_data_path(user_data_dir)
+        
+        # 自动分配端口避免冲突
+        options.auto_port()
         
         # 设置代理
         if proxy:
@@ -166,19 +178,14 @@ class BrowserPool:
         height = random.randint(800, 1080)
         options.set_argument(f"--window-size={width},{height}")
         
-        # 反检测设置
+        # 反检测设置（Docker 环境需要更多参数）
         options.set_argument("--disable-blink-features=AutomationControlled")
         options.set_argument("--no-sandbox")
         options.set_argument("--disable-dev-shm-usage")
         options.set_argument("--disable-gpu")
         options.set_argument("--disable-infobars")
         options.set_argument("--disable-extensions")
-        options.set_argument("--disable-popup-blocking")
-        options.set_argument("--ignore-certificate-errors")
-        options.set_argument("--disable-web-security")
         options.set_argument("--lang=en-US,en")
-        options.set_argument("--disable-software-rasterizer")
-        options.set_argument("--single-process")
         
         options.set_pref("credentials_enable_service", False)
         options.set_pref("profile.password_manager_enabled", False)
@@ -194,9 +201,12 @@ class BrowserPool:
         
         with self._lock:
             if self._available:
+                page = self._available.pop()
                 self._stats["reused"] += 1
-                return self._available.pop()
+                print(f"  ♻️ 复用浏览器实例，剩余: {len(self._available)}")
+                return page
         
+        print("  🆕 创建新浏览器实例...")
         self._stats["created"] += 1
         return self._create_page()
     
@@ -213,11 +223,14 @@ class BrowserPool:
         with self._lock:
             if len(self._available) < self._pool_size:
                 try:
-                    # 清理状态
+                    # 清理 cookies 和状态，但保持浏览器打开
+                    page.clear_cache()
                     page.get("about:blank")
                     self._available.append(page)
+                    print(f"  ♻️ 浏览器实例已归还，可用: {len(self._available)}")
                     return
-                except:
+                except Exception as e:
+                    print(f"  ⚠️ 归还实例失败: {e}")
                     self._stats["failed"] += 1
         
         try:
@@ -233,14 +246,18 @@ class BrowserPool:
         for i in range(count):
             try:
                 page = self._create_page()
+                # 测试浏览器是否正常工作
+                page.get("about:blank")
                 with self._lock:
                     if len(self._available) < self._pool_size:
                         self._available.append(page)
+                        print(f"  ✓ 实例 {i+1}/{count} 就绪")
                     else:
                         page.quit()
-                print(f"  ✓ 实例 {i+1}/{count} 就绪")
             except Exception as e:
                 print(f"  ✗ 实例 {i+1}/{count} 失败: {e}")
+        
+        print(f"🔥 预热完成，可用实例: {len(self._available)}")
         
         print(f"🔥 预热完成，可用实例: {len(self._available)}")
     
@@ -311,6 +328,7 @@ class CloudflareSolver:
         self.use_cache = use_cache
         self.use_pool = use_pool
         self.ua = UserAgent()
+        self._instance_counter = 0
     
     def _random_delay(self, min_ms: int = 100, max_ms: int = 500):
         """随机延迟"""
@@ -319,6 +337,7 @@ class CloudflareSolver:
     def _create_page(self):
         """创建浏览器页面（不使用池时）"""
         import os
+        import tempfile
         from DrissionPage import ChromiumPage, ChromiumOptions
         
         options = ChromiumOptions()
@@ -326,6 +345,16 @@ class CloudflareSolver:
         chrome_path = os.environ.get("CHROME_PATH")
         if chrome_path:
             options.set_browser_path(chrome_path)
+        elif os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
+            options.set_browser_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        
+        # 为每个实例创建独立的用户数据目录，避免冲突
+        self._instance_counter += 1
+        user_data_dir = os.path.join(tempfile.gettempdir(), f"cf_solver_{os.getpid()}_{self._instance_counter}_{random.randint(10000,99999)}")
+        options.set_user_data_path(user_data_dir)
+        
+        # 自动分配端口避免冲突
+        options.auto_port()
         
         if self.proxy:
             proxy_addr = self.proxy if self.proxy.startswith("http") else f"http://{self.proxy}"
@@ -340,287 +369,124 @@ class CloudflareSolver:
         height = random.randint(800, 1080)
         options.set_argument(f"--window-size={width},{height}")
         
+        # 反检测设置（精简版，Windows 兼容）
         options.set_argument("--disable-blink-features=AutomationControlled")
-        options.set_argument("--no-sandbox")
-        options.set_argument("--disable-dev-shm-usage")
-        options.set_argument("--disable-gpu")
         options.set_argument("--disable-infobars")
         options.set_argument("--disable-extensions")
-        options.set_argument("--disable-popup-blocking")
-        options.set_argument("--ignore-certificate-errors")
-        options.set_argument("--disable-web-security")
         options.set_argument("--lang=en-US,en")
-        options.set_argument("--disable-software-rasterizer")
-        options.set_argument("--single-process")
         
         options.set_pref("credentials_enable_service", False)
         options.set_pref("profile.password_manager_enabled", False)
         
         return ChromiumPage(options)
     
-    def _inject_stealth_js(self, page):
-        """注入反检测 JavaScript"""
-        stealth_js = """
-        (function() {
-            // 安全地尝试修改属性，如果已存在则跳过
-            try {
-                if (navigator.webdriver !== undefined) {
-                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
-                }
-            } catch(e) {}
-            
-            try {
-                if (!window.chrome) {
-                    window.chrome = { runtime: {} };
-                }
-            } catch(e) {}
-            
-            try {
-                const originalQuery = window.navigator.permissions.query;
-                if (originalQuery) {
-                    window.navigator.permissions.query = (parameters) => (
-                        parameters.name === 'notifications' ?
-                            Promise.resolve({ state: Notification.permission }) :
-                            originalQuery(parameters)
-                    );
-                }
-            } catch(e) {}
-        })();
-        """
-        try:
-            page.run_js(stealth_js)
-        except Exception:
-            pass  # 静默失败，DrissionPage 已有内置反检测
-    
-    def _simulate_mouse_movement(self, page, retry: int = 3):
-        """模拟鼠标移动"""
-        for attempt in range(retry):
-            try:
-                # 等待页面稳定
-                page.wait.doc_loaded(timeout=5)
-                self._random_delay(300, 500)
-                
-                width = page.run_js("return window.innerWidth") or 1200
-                height = page.run_js("return window.innerHeight") or 800
-                
-                for _ in range(random.randint(3, 6)):
-                    x = random.randint(100, width - 100)
-                    y = random.randint(100, height - 100)
-                    page.actions.move_to((x, y))
-                    self._random_delay(50, 200)
-                return
-            except Exception as e:
-                if attempt < retry - 1:
-                    self._random_delay(500, 1000)
-                else:
-                    print(f"⚠️ 模拟鼠标移动失败: {e}")
-    
-    def _try_click_turnstile(self, page) -> bool:
-        """尝试点击 Turnstile checkbox"""
-        try:
-            selectors = [
-                'iframe[src*="challenges.cloudflare.com"]',
-                'iframe[src*="turnstile"]',
-                'iframe[title*="Cloudflare"]',
-                '#turnstile-wrapper iframe',
-                '.cf-turnstile iframe',
-            ]
-            
-            for selector in selectors:
-                try:
-                    iframe = page.ele(selector, timeout=2)
-                    if iframe:
-                        page.to_frame(iframe)
-                        self._random_delay(300, 800)
-                        
-                        checkbox_selectors = [
-                            'input[type="checkbox"]',
-                            '.ctp-checkbox-label',
-                            '#challenge-stage',
-                            'div[class*="checkbox"]',
-                        ]
-                        
-                        for cb_selector in checkbox_selectors:
-                            try:
-                                checkbox = page.ele(cb_selector, timeout=1)
-                                if checkbox:
-                                    self._random_delay(200, 500)
-                                    checkbox.click()
-                                    page.to_main()
-                                    return True
-                            except:
-                                continue
-                        
-                        page.to_main()
-                except:
-                    continue
-            
-            button_selectors = [
-                'input[type="button"][value*="Verify"]',
-                'button:contains("Verify")',
-                '#challenge-form input[type="submit"]',
-            ]
-            
-            for selector in button_selectors:
-                try:
-                    btn = page.ele(selector, timeout=1)
-                    if btn:
-                        self._random_delay(200, 500)
-                        btn.click()
-                        return True
-                except:
-                    continue
-                    
-        except Exception as e:
-            print(f"⚠️ 点击 Turnstile 失败: {e}")
-        
-        return False
-    
-    def solve(self, website_url: str, skip_cache: bool = False, max_retries: int = 2) -> CloudflareSolution:
+    def solve(self, website_url: str, skip_cache: bool = False, max_retries: int = 5) -> CloudflareSolution:
         """
         解决 Cloudflare Turnstile challenge.
-        
-        Args:
-            website_url: 目标页面 URL
-            skip_cache: 跳过缓存，强制获取新的 cookie
-            max_retries: 最大重试次数
-        
-        Returns:
-            CloudflareSolution 包含 cf_clearance cookie
+        如果遇到人机验证，关闭浏览器重新打开一个新的。
         """
         # 检查缓存
         if self.use_cache and not skip_cache:
             cache = get_cache()
             cached = cache.get(website_url, self.proxy)
             if cached:
-                print(f"📦 使用缓存的 cf_clearance (剩余 {1800 - (datetime.now() - cached.created_at).total_seconds():.0f}s)")
+                print(f"📦 使用缓存的 cf_clearance")
                 return cached
         
         last_error = None
         
         for attempt in range(max_retries + 1):
-            pool = get_browser_pool() if self.use_pool else None
             page = None
             
             try:
                 if attempt > 0:
-                    print(f"🔄 重试第 {attempt} 次...")
-                    self._random_delay(1000, 2000)
+                    print(f"🔄 重试第 {attempt} 次，创建新浏览器...")
                 
-                if pool:
-                    page = pool.acquire(self.proxy)
-                else:
-                    page = self._create_page()
-                
-                self._random_delay(500, 1500)
+                # 每次都创建新的浏览器实例，不使用池
+                page = self._create_page()
                 
                 print(f"🌐 正在访问: {website_url}")
                 page.get(website_url)
                 
-                self._inject_stealth_js(page)
-                self._random_delay(1000, 2000)
-                self._simulate_mouse_movement(page)
+                # 等待页面加载
+                self._random_delay(2000, 3000)
                 
-                cf_clearance = self._wait_for_clearance(page)
+                # 检查是否需要人机验证
+                cf_clearance = self._check_clearance(page)
                 
-                cookies = {cookie["name"]: cookie["value"] for cookie in page.cookies()}
-                user_agent = page.run_js("return navigator.userAgent")
-                
-                solution = CloudflareSolution(
-                    cf_clearance=cf_clearance,
-                    cookies=cookies,
-                    user_agent=user_agent,
-                    url=website_url
-                )
-                
-                # 存入缓存
-                if self.use_cache:
-                    get_cache().set(website_url, solution, self.proxy)
-                
-                return solution
+                if cf_clearance:
+                    cookies = {cookie["name"]: cookie["value"] for cookie in page.cookies()}
+                    user_agent = page.run_js("return navigator.userAgent")
+                    
+                    solution = CloudflareSolution(
+                        cf_clearance=cf_clearance,
+                        cookies=cookies,
+                        user_agent=user_agent,
+                        url=website_url
+                    )
+                    
+                    if self.use_cache:
+                        get_cache().set(website_url, solution, self.proxy)
+                    
+                    print(f"✅ 获取 cf_clearance 成功")
+                    return solution
+                else:
+                    # 遇到人机验证，关闭浏览器重试
+                    print(f"⚠️ 遇到人机验证，关闭浏览器...")
+                    raise CloudflareError("需要人机验证")
                 
             except Exception as e:
                 last_error = e
-                error_msg = str(e).lower()
-                # 连接断开或页面崩溃，可以重试
-                if "disconnected" in error_msg or "connection" in error_msg or "crashed" in error_msg:
-                    print(f"⚠️ 浏览器连接断开，准备重试...")
-                    if page:
-                        try:
-                            if pool:
-                                # 不归还到池，直接关闭
-                                page.quit()
-                            else:
-                                page.quit()
-                        except:
-                            pass
-                        page = None
-                    continue
-                else:
-                    raise
             finally:
+                # 每次都关闭浏览器
                 if page:
                     try:
-                        if pool:
-                            pool.release(page, self.proxy)
-                        else:
-                            page.quit()
+                        page.quit()
+                        print(f"🔒 浏览器已关闭")
                     except:
                         pass
+                    page = None
         
-        # 所有重试都失败
         raise CloudflareError(f"重试 {max_retries} 次后仍然失败: {last_error}")
     
-    def _wait_for_clearance(self, page) -> str:
-        """等待 cf_clearance cookie 出现"""
+    def _check_clearance(self, page, wait_time: int = 10) -> Optional[str]:
+        """检查是否获取到 cf_clearance，如果遇到人机验证返回 None"""
         start_time = time.time()
-        click_attempted = False
-        last_mouse_move = 0
         
-        while True:
-            elapsed = time.time() - start_time
-            if elapsed > self.timeout:
-                raise CloudflareError(f"等待 Cloudflare 验证超时 ({self.timeout}s)")
-            
-            # 先检查 cookie
+        while time.time() - start_time < wait_time:
             try:
+                # 检查是否有人机验证
+                page_text = page.html.lower() if page.html else ""
+                title = page.title.lower() if page.title else ""
+                
+                is_challenge = (
+                    "确认您是真人" in page_text or
+                    "verify you are human" in page_text or
+                    "请完成以下操作" in page_text
+                )
+                
+                if is_challenge:
+                    return None
+                
+                # 检查 cookie
                 for cookie in page.cookies():
                     if cookie["name"] == "cf_clearance":
-                        print(f"✅ Cloudflare 验证通过，耗时 {elapsed:.1f}s")
                         return cookie["value"]
-            except:
-                self._random_delay(500, 1000)
-                continue
-            
-            # 检查页面状态
-            try:
-                title = page.title.lower() if page.title else ""
-            except:
-                self._random_delay(500, 1000)
-                continue
-            
-            if "just a moment" in title or "checking" in title:
-                print(f"⏳ 等待 Cloudflare 验证中... ({elapsed:.1f}s)")
                 
-                if not click_attempted or elapsed > 5:
-                    if self._try_click_turnstile(page):
-                        click_attempted = True
-                        self._random_delay(1000, 2000)
-                
-                # 每15秒模拟一次鼠标移动，避免频繁操作
-                if elapsed - last_mouse_move > 15:
-                    self._simulate_mouse_movement(page)
-                    last_mouse_move = elapsed
-            else:
-                try:
+                # 如果页面不是验证页面且没有 cf_clearance，继续等待
+                if "just a moment" not in title and "checking" not in title:
+                    # 可能已经通过，再检查一次 cookie
+                    self._random_delay(500, 1000)
                     for cookie in page.cookies():
                         if cookie["name"] == "cf_clearance":
-                            print(f"✅ Cloudflare 验证通过，耗时 {elapsed:.1f}s")
                             return cookie["value"]
-                except:
-                    pass
+                
+            except:
+                pass
             
-            self._random_delay(800, 1500)
+            self._random_delay(500, 1000)
+        
+        return None
 
 
 class CloudflareError(Exception):
@@ -632,8 +498,8 @@ def main():
     parser = argparse.ArgumentParser(description="Cloudflare Turnstile Challenge Solver")
     parser.add_argument("url", nargs="?", default="https://sora.chatgpt.com", help="目标 URL")
     parser.add_argument("-p", "--proxy", help="代理地址 (ip:port)")
-    parser.add_argument("--headless", action="store_true", default=True, help="无头模式")
-    parser.add_argument("--no-headless", action="store_true", help="显示浏览器窗口")
+    parser.add_argument("--headless", action="store_true", default=True, help="无头模式（默认）")
+    parser.add_argument("--no-headless", action="store_true", help="显示浏览器窗口（默认）")
     parser.add_argument("-t", "--timeout", type=int, default=60, help="超时时间（秒）")
     parser.add_argument("-o", "--output", help="输出 JSON 文件路径")
     parser.add_argument("--no-cache", action="store_true", help="禁用缓存")

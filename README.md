@@ -6,9 +6,9 @@
 
 ## 特性
 
-- 并发处理，支持多请求并行
+- 无头模式运行，适合服务器部署
+- 自动重试机制，遇到人机验证自动重启浏览器
 - 结果缓存，30 分钟内复用
-- 浏览器池预热，减少冷启动
 - 后台管理，可视化配置
 
 ## 部署
@@ -46,7 +46,6 @@ docker-compose up -d
 | url | string | 目标 URL | https://sora.chatgpt.com |
 | proxy | string | 代理地址，格式: `http://host:port` 或 `socks5://host:port` | 无 |
 | timeout | int | 超时秒数，范围 10-300 | 60 |
-| headless | bool | 是否无头模式运行浏览器 | true |
 | skip_cache | bool | 是否跳过缓存，设为 `true` 强制重新获取 | false |
 
 ```bash
@@ -125,3 +124,11 @@ Docker 必须设置 `shm_size: 2gb`，否则 Chrome 会崩溃。
 volumes:
   - ./data:/app/data  # 配置数据库
 ```
+
+## 工作原理
+
+1. 使用无头 Chrome 浏览器访问目标页面
+2. 等待 Cloudflare 验证自动通过
+3. 如果遇到人机验证（需要点击），自动关闭浏览器并重新打开重试
+4. 最多重试 5 次
+5. 成功后返回 cf_clearance cookie

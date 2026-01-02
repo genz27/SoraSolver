@@ -12,6 +12,9 @@ services:
       - MAX_WORKERS=3
       - POOL_SIZE=2
       - SEMAPHORE_LIMIT=3
+    # 允许容器访问宿主机
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # 关键：增加共享内存，Chrome 需要
     shm_size: '2gb'
     # 资源限制
