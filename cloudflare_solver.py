@@ -361,38 +361,59 @@ class CloudflareSolver:
     def _inject_stealth_js(self, page):
         """注入反检测 JavaScript"""
         stealth_js = """
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-        window.chrome = { runtime: {} };
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-                Promise.resolve({ state: Notification.permission }) :
-                originalQuery(parameters)
-        );
+        (function() {
+            // 安全地尝试修改属性，如果已存在则跳过
+            try {
+                if (navigator.webdriver !== undefined) {
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+                }
+            } catch(e) {}
+            
+            try {
+                if (!window.chrome) {
+                    window.chrome = { runtime: {} };
+                }
+            } catch(e) {}
+            
+            try {
+                const originalQuery = window.navigator.permissions.query;
+                if (originalQuery) {
+                    window.navigator.permissions.query = (parameters) => (
+                        parameters.name === 'notifications' ?
+                            Promise.resolve({ state: Notification.permission }) :
+                            originalQuery(parameters)
+                    );
+                }
+            } catch(e) {}
+        })();
         """
         try:
             page.run_js(stealth_js)
-        except Exception as e:
-            print(f"⚠️ 注入反检测脚本失败: {e}")
+        except Exception:
+            pass  # 静默失败，DrissionPage 已有内置反检测
     
-    def _simulate_mouse_movement(self, page):
+    def _simulate_mouse_movement(self, page, retry: int = 3):
         """模拟鼠标移动"""
-        try:
-            width = page.run_js("return window.innerWidth") or 1200
-            height = page.run_js("return window.innerHeight") or 800
-            
-            for _ in range(random.randint(3, 6)):
-                x = random.randint(100, width - 100)
-                y = random.randint(100, height - 100)
-                page.actions.move_to((x, y))
-                self._random_delay(50, 200)
-        except Exception as e:
-            print(f"⚠️ 模拟鼠标移动失败: {e}")
+        for attempt in range(retry):
+            try:
+                # 等待页面稳定
+                page.wait.doc_loaded(timeout=5)
+                self._random_delay(300, 500)
+                
+                width = page.run_js("return window.innerWidth") or 1200
+                height = page.run_js("return window.innerHeight") or 800
+                
+                for _ in range(random.randint(3, 6)):
+                    x = random.randint(100, width - 100)
+                    y = random.randint(100, height - 100)
+                    page.actions.move_to((x, y))
+                    self._random_delay(50, 200)
+                return
+            except Exception as e:
+                if attempt < retry - 1:
+                    self._random_delay(500, 1000)
+                else:
+                    print(f"⚠️ 模拟鼠标移动失败: {e}")
     
     def _try_click_turnstile(self, page) -> bool:
         """尝试点击 Turnstile checkbox"""
@@ -529,12 +550,22 @@ class CloudflareSolver:
             if elapsed > self.timeout:
                 raise CloudflareError(f"等待 Cloudflare 验证超时 ({self.timeout}s)")
             
-            for cookie in page.cookies():
-                if cookie["name"] == "cf_clearance":
-                    print(f"✅ Cloudflare 验证通过，耗时 {elapsed:.1f}s")
-                    return cookie["value"]
+            # 先检查 cookie
+            try:
+                for cookie in page.cookies():
+                    if cookie["name"] == "cf_clearance":
+                        print(f"✅ Cloudflare 验证通过，耗时 {elapsed:.1f}s")
+                        return cookie["value"]
+            except:
+                self._random_delay(500, 1000)
+                continue
             
-            title = page.title.lower() if page.title else ""
+            # 检查页面状态
+            try:
+                title = page.title.lower() if page.title else ""
+            except:
+                self._random_delay(500, 1000)
+                continue
             
             if "just a moment" in title or "checking" in title:
                 print(f"⏳ 等待 Cloudflare 验证中... ({elapsed:.1f}s)")
@@ -544,14 +575,18 @@ class CloudflareSolver:
                         click_attempted = True
                         self._random_delay(1000, 2000)
                 
-                if elapsed - last_mouse_move > 10:
+                # 每15秒模拟一次鼠标移动，避免频繁操作
+                if elapsed - last_mouse_move > 15:
                     self._simulate_mouse_movement(page)
                     last_mouse_move = elapsed
             else:
-                for cookie in page.cookies():
-                    if cookie["name"] == "cf_clearance":
-                        print(f"✅ Cloudflare 验证通过，耗时 {elapsed:.1f}s")
-                        return cookie["value"]
+                try:
+                    for cookie in page.cookies():
+                        if cookie["name"] == "cf_clearance":
+                            print(f"✅ Cloudflare 验证通过，耗时 {elapsed:.1f}s")
+                            return cookie["value"]
+                except:
+                    pass
             
             self._random_delay(800, 1500)
 

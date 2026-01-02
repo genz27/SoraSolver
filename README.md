@@ -41,19 +41,42 @@ docker-compose up -d
 
 ### GET `/v1/challenge`
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| url | 目标 URL | https://sora.chatgpt.com |
-| proxy | 代理地址 | 无 |
-| timeout | 超时秒数 | 60 |
-| skip_cache | 跳过缓存 | false |
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| url | string | 目标 URL | https://sora.chatgpt.com |
+| proxy | string | 代理地址，格式: `http://host:port` 或 `socks5://host:port` | 无 |
+| timeout | int | 超时秒数，范围 10-300 | 60 |
+| headless | bool | 是否无头模式运行浏览器 | true |
+| skip_cache | bool | 是否跳过缓存，设为 `true` 强制重新获取 | false |
 
 ```bash
+# 基本请求（使用缓存）
 curl "http://localhost:8005/v1/challenge"
+
+# 强制跳过缓存，重新获取
+curl "http://localhost:8005/v1/challenge?skip_cache=true"
+
+# 指定目标 URL 和代理
+curl "http://localhost:8005/v1/challenge?url=https://example.com&proxy=http://127.0.0.1:7890"
 
 # 使用 API Key（开启验证时）
 curl -H "X-API-Key: your-key" "http://localhost:8005/v1/challenge"
 ```
+
+响应示例：
+```json
+{
+  "success": true,
+  "cf_clearance": "xxx",
+  "cookies": {"cf_clearance": "xxx", ...},
+  "user_agent": "Mozilla/5.0 ...",
+  "elapsed_seconds": 12.34,
+  "request_id": "abc12345",
+  "from_cache": false
+}
+```
+
+`from_cache` 字段表示结果是否来自缓存。
 
 ### API Key 验证
 
@@ -67,14 +90,24 @@ curl -H "X-API-Key: your-key" "http://localhost:8005/v1/challenge"
 
 ## 性能配置
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| max_workers | 并发浏览器数 | 3 |
-| pool_size | 预热浏览器数 | 2 |
-| semaphore_limit | 并发请求限制 | 3 |
-| cache_ttl | 缓存过期时间(秒) | 1800 |
+| 配置项 | 说明 | 默认值 | 环境变量 |
+|--------|------|--------|----------|
+| max_workers | 并发浏览器数，同时运行的浏览器实例数量 | 3 | MAX_WORKERS |
+| pool_size | 预热浏览器数，启动时预先创建的浏览器数量 | 2 | POOL_SIZE |
+| semaphore_limit | 并发请求限制，同时处理的请求数量 | 3 | SEMAPHORE_LIMIT |
+| cache_ttl | 缓存过期时间(秒)，cf_clearance 的缓存有效期 | 1800 | CACHE_TTL |
+| require_api_key | 是否启用 API Key 验证，`1` 启用 `0` 禁用 | 0 | - |
 
-可通过管理后台或环境变量修改。
+可通过管理后台或环境变量修改。环境变量优先级高于数据库配置。
+
+```yaml
+# docker-compose.yml 示例
+environment:
+  - MAX_WORKERS=5
+  - POOL_SIZE=3
+  - SEMAPHORE_LIMIT=5
+  - CACHE_TTL=3600
+```
 
 ## 资源需求
 
