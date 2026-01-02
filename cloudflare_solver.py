@@ -543,38 +543,78 @@ class CloudflareSolver:
                 
                 # 获取页面状态
                 title = (page.title or "").lower()
+                url = (page.url or "").lower()
                 page_text = page.html or ""
                 page_text_lower = page_text.lower()
                 
-                # 检查是否有人机验证（需要点击的那种）- 中英文都检测
-                is_manual_challenge = (
-                    "确认您是真人" in page_text or
-                    "verify you are human" in page_text_lower or
-                    "verify you're human" in page_text_lower or
-                    "please verify" in page_text_lower or
-                    "human verification" in page_text_lower or
-                    "click to verify" in page_text_lower or
-                    "i am human" in page_text_lower or
-                    "i'm not a robot" in page_text_lower or
-                    "turnstile" in page_text_lower
+                # 检查标题是否包含人机验证关键词
+                challenge_titles = [
+                    "just a moment",
+                    "checking your browser",
+                    "please wait",
+                    "attention required",
+                    "security check",
+                    "ddos protection",
+                    "cloudflare",
+                    "验证",
+                ]
+                is_challenge_title = any(t in title for t in challenge_titles)
+                
+                # 检查 URL 是否包含 challenge 相关
+                is_challenge_url = (
+                    "challenge" in url or
+                    "cdn-cgi" in url or
+                    "ray=" in url
                 )
+                
+                # 检查页面内容是否有人机验证（需要点击的那种）
+                challenge_texts = [
+                    "确认您是真人",
+                    "验证您是真人",
+                    "请完成安全检查",
+                    "verify you are human",
+                    "verify you're human",
+                    "please verify",
+                    "human verification",
+                    "click to verify",
+                    "i am human",
+                    "i'm not a robot",
+                    "prove you are human",
+                    "complete the security check",
+                    "checking if the site connection is secure",
+                    "enable javascript and cookies",
+                    "ray id:",
+                    "cf-turnstile",
+                    "challenges.cloudflare.com",
+                ]
+                is_challenge_content = any(t in page_text_lower for t in challenge_texts)
+                
+                # 检查是否有 Cloudflare 特征元素
+                has_cf_elements = (
+                    'id="challenge-running"' in page_text_lower or
+                    'id="challenge-form"' in page_text_lower or
+                    'class="cf-' in page_text_lower or
+                    'data-ray=' in page_text_lower or
+                    'cf_chl_opt' in page_text_lower
+                )
+                
+                # 综合判断是否是人机验证页面
+                is_manual_challenge = is_challenge_content or has_cf_elements
                 
                 if is_manual_challenge:
                     print(f"    ⚠️ 检测到人机验证页面 (第{check_count}次检查, {elapsed:.1f}s)")
+                    if check_count == 1:
+                        print(f"      标题: {title[:50]}...")
                     return None
                 
-                # 检查是否在自动验证中
-                is_auto_checking = (
-                    "just a moment" in title or 
-                    "checking" in title or
-                    "please wait" in title
-                )
+                # 检查是否在自动验证中（可以等待）
+                is_auto_checking = is_challenge_title and not is_manual_challenge
                 
                 if is_auto_checking:
                     if check_count == 1:
-                        print(f"    ⏳ 页面正在自动验证中...")
+                        print(f"    ⏳ 页面正在自动验证中... (标题: {title[:30]})")
                 elif check_count == 1:
-                    print(f"    📄 页面已加载，等待 cookie...")
+                    print(f"    📄 页面已加载，等待 cookie... (标题: {title[:30]})")
                 
             except Exception as e:
                 if check_count == 1:
