@@ -159,6 +159,20 @@ class CloudflareSolver:
         """随机延迟"""
         time.sleep(random.randint(min_ms, max_ms) / 1000)
     
+    def _get_mobile_ua(self) -> str:
+        """获取手机 UA，确保不是桌面"""
+        for _ in range(10):
+            ua = self.ua.random
+            ua_lower = ua.lower()
+            # 排除桌面 UA
+            if 'windows nt' in ua_lower or 'macintosh' in ua_lower or 'x11' in ua_lower:
+                continue
+            # 确认是移动端
+            if 'android' in ua_lower or 'iphone' in ua_lower or 'ipad' in ua_lower:
+                return ua
+        # fallback 到固定的手机 UA
+        return "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    
     def _quick_check_cookie(self, page) -> Optional[str]:
         """快速检查 cf_clearance cookie，必须页面已通过验证"""
         try:
@@ -208,8 +222,8 @@ class CloudflareSolver:
         options.set_argument("--window-size=1920,1080")
         options.set_argument("--disable-blink-features=AutomationControlled")
 
-        # 设置 Linux/手机 User-Agent，禁止 PC Windows/Mac
-        fake_ua = self.ua.random
+        # 设置手机 User-Agent，确保不是桌面
+        fake_ua = self._get_mobile_ua()
         options.set_argument(f"--user-agent={fake_ua}")
         
         # Docker 环境需要额外参数
