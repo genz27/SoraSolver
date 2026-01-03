@@ -74,6 +74,7 @@ def init_db():
         "pool_size": ("2", "预热浏览器池大小"),
         "semaphore_limit": ("3", "并发请求限制"),
         "cache_ttl": ("1800", "缓存过期时间(秒)"),
+        "max_retries": ("0", "默认重试次数"),
         "require_api_key": ("0", "是否需要API Key验证(0/1)"),
         "proxy_pool_enabled": ("0", "是否启用代理池(0/1)"),
         "proxy_list": ("", "代理列表(一行一个)"),
