@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# 安装 Chrome 和依赖
+# 安装 Chrome、Xvfb 和依赖
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -23,8 +23,9 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
-    # 添加共享内存支持
     procps \
+    # Xvfb 虚拟显示器
+    xvfb \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
@@ -42,18 +43,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# 设置 Chrome 路径
+# 设置环境变量
 ENV CHROME_PATH=/usr/bin/google-chrome-stable
+ENV DOCKER_ENV=1
+ENV DISPLAY=:99
 
-# Chrome 优化环境变量
-ENV CHROME_FLAGS="--disable-dev-shm-usage --no-sandbox --disable-gpu --single-process"
-
-# 并发配置（可通过 docker run -e 覆盖）
+# 并发配置
 ENV MAX_WORKERS=3
-ENV POOL_SIZE=2
 ENV SEMAPHORE_LIMIT=3
 
 EXPOSE 8005
 
-# 使用 uvicorn 多 worker 模式
-CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8005", "--workers", "1"]
+# 启动 Xvfb 和服务
+CMD Xvfb :99 -screen 0 1920x1080x24 & sleep 1 && python -m uvicorn server:app --host 0.0.0.0 --port 8005 --workers 1

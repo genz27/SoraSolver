@@ -173,29 +173,33 @@ class CloudflareSolver:
         elif os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
             options.set_browser_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
         
+        # 每个实例独立用户目录，避免冲突
+        self._instance_counter += 1
+        user_data_dir = os.path.join(tempfile.gettempdir(), f"cf_solver_{self._instance_counter}_{random.randint(10000,99999)}")
+        options.set_user_data_path(user_data_dir)
         options.auto_port()
         
         if self.proxy:
             proxy_addr = self.proxy if self.proxy.startswith("http") else f"http://{self.proxy}"
             options.set_proxy(proxy_addr)
         
-        if self.headless:
-            options.set_argument("--headless=new")
+        is_docker = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_ENV")
+        
+        # Docker 用 Xvfb 虚拟显示器，不用无头模式（无头会被检测）
+        # 本地根据参数决定
+        if self.headless and not is_docker:
+            options.headless()
         
         options.set_argument("--window-size=1920,1080")
         options.set_argument("--disable-blink-features=AutomationControlled")
         
-        # Docker 环境需要这些参数
-        if os.path.exists("/.dockerenv") or os.environ.get("DOCKER_ENV"):
+        # Docker 环境需要额外参数
+        if is_docker:
             options.set_argument("--no-sandbox")
             options.set_argument("--disable-dev-shm-usage")
             options.set_argument("--disable-gpu")
-            # Docker 里需要独立用户目录
-            self._instance_counter += 1
-            user_data_dir = os.path.join(tempfile.gettempdir(), f"cf_solver_{self._instance_counter}_{random.randint(10000,99999)}")
-            options.set_user_data_path(user_data_dir)
         
-        return ChromiumPage(options)
+        return ChromiumPage(options, timeout=30)
     
     def solve(self, website_url: str, skip_cache: bool = False, max_retries: int = 0) -> CloudflareSolution:
         """
