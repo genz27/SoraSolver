@@ -47,6 +47,7 @@ docker-compose up -d
 | proxy | string | 代理地址，格式: `http://host:port` 或 `socks5://host:port` | 无 |
 | timeout | int | 超时秒数，范围 10-300 | 60 |
 | skip_cache | bool | 是否跳过缓存，设为 `true` 强制重新获取 | false |
+| max_retries | int | 重试次数，范围 0-10，不传则使用后台配置 | 0 |
 
 ```bash
 # 基本请求（使用缓存）
@@ -94,6 +95,7 @@ curl -H "X-API-Key: your-key" "http://localhost:8005/v1/challenge"
 | max_workers | 并发浏览器数，同时运行的浏览器实例数量 | 3 | MAX_WORKERS |
 | semaphore_limit | 并发请求限制，同时处理的请求数量 | 3 | SEMAPHORE_LIMIT |
 | cache_ttl | 缓存过期时间(秒)，cf_clearance 的缓存有效期 | 1800 | CACHE_TTL |
+| max_retries | 默认重试次数，失败后自动重试 | 0 | MAX_RETRIES |
 | require_api_key | 是否启用 API Key 验证，`1` 启用 `0` 禁用 | 0 | - |
 
 可通过管理后台或环境变量修改。环境变量优先级高于数据库配置。
@@ -125,8 +127,7 @@ volumes:
 
 ## 工作原理
 
-1. 每次请求时启动无头 Chrome 浏览器访问目标页面
+1. 每次请求时启动 Chrome 浏览器访问目标页面（Docker 使用 Xvfb 虚拟显示器）
 2. 等待 Cloudflare 验证自动通过
-3. 如果遇到人机验证（需要点击），自动关闭浏览器并重新打开重试
-4. 最多重试 5 次
-5. 成功后返回 cf_clearance cookie，关闭浏览器
+3. 如果失败，根据 max_retries 配置自动重试
+4. 成功后返回 cf_clearance cookie，关闭浏览器

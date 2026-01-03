@@ -147,7 +147,8 @@ async def solve_challenge(
     proxy: Optional[str] = Query(default=None),
     timeout: int = Query(default=60, ge=10, le=300),
     headless: bool = Query(default=False),
-    skip_cache: bool = Query(default=False)
+    skip_cache: bool = Query(default=False),
+    max_retries: Optional[int] = Query(default=None, ge=0, le=10)
 ):
     """解决 Cloudflare Challenge"""
     request_id = str(uuid.uuid4())[:8]
@@ -195,11 +196,14 @@ async def solve_challenge(
                 use_cache=True
             )
             
+            # 获取重试次数配置
+            retries = max_retries if max_retries is not None else get_config_int("max_retries", 0)
+            
             try:
                 loop = asyncio.get_event_loop()
                 solution = await loop.run_in_executor(
                     executor,
-                    lambda: solver.solve(url, skip_cache=skip_cache)
+                    lambda: solver.solve(url, skip_cache=skip_cache, max_retries=retries)
                 )
                 
                 elapsed = time.time() - start_time
