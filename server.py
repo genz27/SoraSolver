@@ -146,7 +146,7 @@ async def solve_challenge(
     url: str = Query(default="https://sora.chatgpt.com"),
     proxy: Optional[str] = Query(default=None),
     timeout: int = Query(default=60, ge=10, le=300),
-    headless: bool = Query(default=False),
+    headless: bool = Query(default=True),
     skip_cache: bool = Query(default=False),
     max_retries: Optional[int] = Query(default=None, ge=0, le=10)
 ):

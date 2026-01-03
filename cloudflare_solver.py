@@ -152,7 +152,7 @@ class CloudflareSolver:
         self.headless = headless
         self.timeout = timeout
         self.use_cache = use_cache
-        self.ua = UserAgent()
+        self.ua = UserAgent(platforms=['mobile', 'tablet'], os=['android', 'ios'])
         self._instance_counter = 0
     
     def _random_delay(self, min_ms: int = 100, max_ms: int = 500):
@@ -207,6 +207,10 @@ class CloudflareSolver:
         
         options.set_argument("--window-size=1920,1080")
         options.set_argument("--disable-blink-features=AutomationControlled")
+
+        # 设置 Linux/手机 User-Agent，禁止 PC Windows/Mac
+        fake_ua = self.ua.random
+        options.set_argument(f"--user-agent={fake_ua}")
         
         # Docker 环境需要额外参数
         if is_docker:
