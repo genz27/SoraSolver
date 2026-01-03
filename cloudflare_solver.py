@@ -159,6 +159,21 @@ class CloudflareSolver:
         """随机延迟"""
         time.sleep(random.randint(min_ms, max_ms) / 1000)
     
+    def _quick_check_cookie(self, page) -> Optional[str]:
+        """快速检查 cf_clearance cookie，必须页面已通过验证"""
+        try:
+            title = (page.title or "").lower()
+            # 如果还在验证页面，不返回 cookie
+            if any(t in title for t in ["just a moment", "checking", "please wait", "验证", "cloudflare"]):
+                return None
+            # 页面已加载，检查 cookie
+            for cookie in page.cookies():
+                if cookie["name"] == "cf_clearance":
+                    return cookie["value"]
+        except:
+            pass
+        return None
+    
     def _create_page(self):
         """创建浏览器页面"""
         import os
@@ -235,17 +250,28 @@ class CloudflareSolver:
                 
                 # 设置页面加载
                 try:
-                    page.get(website_url, timeout=30)
+                    page.get(website_url, timeout=20)
                 except Exception as e:
                     print(f"  ⚠️ 页面加载异常: {e}")
                 
-                print(f"  ⏳ 等待页面加载...")
-                self._random_delay(3000, 5000)
+                # 立即检查是否已有 cf_clearance
+                cf_clearance = self._quick_check_cookie(page)
+                if cf_clearance:
+                    cookies = {cookie["name"]: cookie["value"] for cookie in page.cookies()}
+                    user_agent = page.run_js("return navigator.userAgent")
+                    solution = CloudflareSolution(
+                        cf_clearance=cf_clearance,
+                        cookies=cookies,
+                        user_agent=user_agent,
+                        url=website_url
+                    )
+                    if self.use_cache:
+                        get_cache().set(website_url, solution, self.proxy)
+                    print(f"✅ 快速获取 cf_clearance!")
+                    return solution
                 
-                title = page.title if page.title else "无标题"
-                print(f"  📄 页面标题: {title}")
-                
-                print(f"  🔍 检查 cf_clearance...")
+                # 等待 CF 验证
+                print(f"  ⏳ 等待验证...")
                 cf_clearance = self._check_clearance(page)
                 
                 if cf_clearance:
@@ -284,106 +310,38 @@ class CloudflareSolver:
         print(f"❌ 所有 {max_retries + 1} 次尝试均失败")
         raise CloudflareError(f"重试 {max_retries} 次后仍然失败: {last_error}")
     
-    def _check_clearance(self, page, wait_time: int = 8) -> Optional[str]:
-        """检查是否获取到 cf_clearance，如果遇到人机验证返回 None"""
+    def _check_clearance(self, page, wait_time: int = 6) -> Optional[str]:
+        """检查是否获取到 cf_clearance，必须页面已通过验证"""
         start_time = time.time()
         check_count = 0
+        cf_challenge_titles = ["just a moment", "checking", "please wait", "验证", "cloudflare", "attention"]
         
         while time.time() - start_time < wait_time:
             check_count += 1
             elapsed = time.time() - start_time
             
             try:
-                # 先检查 cookie
-                cookies = page.cookies()
-                for cookie in cookies:
-                    if cookie["name"] == "cf_clearance":
-                        print(f"    ✓ 找到 cf_clearance (第{check_count}次检查, {elapsed:.1f}s)")
-                        return cookie["value"]
-                
-                # 获取页面状态
                 title = (page.title or "").lower()
-                url = (page.url or "").lower()
-                page_text = page.html or ""
-                page_text_lower = page_text.lower()
+                is_challenge_page = any(t in title for t in cf_challenge_titles)
                 
-                # 检查标题是否包含人机验证关键词
-                challenge_titles = [
-                    "just a moment",
-                    "checking your browser",
-                    "please wait",
-                    "attention required",
-                    "security check",
-                    "ddos protection",
-                    "cloudflare",
-                    "验证",
-                ]
-                is_challenge_title = any(t in title for t in challenge_titles)
-                
-                # 检查 URL 是否包含 challenge 相关
-                is_challenge_url = (
-                    "challenge" in url or
-                    "cdn-cgi" in url or
-                    "ray=" in url
-                )
-                
-                # 检查页面内容是否有人机验证（需要点击的那种）
-                challenge_texts = [
-                    "确认您是真人",
-                    "验证您是真人",
-                    "请完成安全检查",
-                    "verify you are human",
-                    "verify you're human",
-                    "please verify",
-                    "human verification",
-                    "click to verify",
-                    "i am human",
-                    "i'm not a robot",
-                    "prove you are human",
-                    "complete the security check",
-                    "checking if the site connection is secure",
-                    "enable javascript and cookies",
-                    "ray id:",
-                    "cf-turnstile",
-                    "challenges.cloudflare.com",
-                ]
-                is_challenge_content = any(t in page_text_lower for t in challenge_texts)
-                
-                # 检查是否有 Cloudflare 特征元素
-                has_cf_elements = (
-                    'id="challenge-running"' in page_text_lower or
-                    'id="challenge-form"' in page_text_lower or
-                    'class="cf-' in page_text_lower or
-                    'data-ray=' in page_text_lower or
-                    'cf_chl_opt' in page_text_lower
-                )
-                
-                # 综合判断是否是人机验证页面
-                is_manual_challenge = is_challenge_content or has_cf_elements
-                
-                if is_manual_challenge:
-                    print(f"    ⚠️ 检测到人机验证页面 (第{check_count}次检查, {elapsed:.1f}s)")
-                    if check_count == 1:
-                        print(f"      标题: {title[:50]}...")
-                    return None
-                
-                # 检查是否在自动验证中（可以等待）
-                is_auto_checking = is_challenge_title and not is_manual_challenge
-                
-                if is_auto_checking:
-                    if check_count == 1:
-                        print(f"    ⏳ 页面正在自动验证中... (标题: {title[:30]})")
-                elif check_count == 1:
-                    print(f"    📄 页面已加载，等待 cookie... (标题: {title[:30]})")
+                # 只有不在验证页面时才检查 cookie
+                if not is_challenge_page:
+                    for cookie in page.cookies():
+                        if cookie["name"] == "cf_clearance":
+                            print(f"    ✓ 验证通过，获取 cf_clearance ({elapsed:.1f}s)")
+                            return cookie["value"]
+                    
+                    # 页面已加载但没有 cookie，可能不需要 CF 验证
+                    if check_count > 5:
+                        print(f"    ⚠️ 页面已加载但无 cf_clearance")
+                        return None
                 
             except Exception as e:
                 if check_count == 1:
                     print(f"    ⚠️ 检查出错: {e}")
             
-            self._random_delay(500, 1000)
+            time.sleep(0.3)
         
-        # 超时
-        print(f"    ⏰ 等待超时 ({wait_time}s)，共检查 {check_count} 次")
         return None
 
 
