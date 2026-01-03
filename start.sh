@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 清理旧的 Xvfb 锁文件
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null
+
 # 启动 Xvfb 虚拟显示器
 Xvfb :99 -screen 0 1920x1080x24 -ac &
 sleep 2
