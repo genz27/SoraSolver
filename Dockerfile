@@ -42,6 +42,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+RUN chmod +x start.sh
 
 # 设置环境变量
 ENV CHROME_PATH=/usr/bin/google-chrome-stable
@@ -54,5 +55,4 @@ ENV SEMAPHORE_LIMIT=3
 
 EXPOSE 8005
 
-# 启动 Xvfb 和服务
-CMD Xvfb :99 -screen 0 1920x1080x24 & sleep 1 && python -m uvicorn server:app --host 0.0.0.0 --port 8005 --workers 1
+CMD ["./start.sh"]
